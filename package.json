@@ -1,0 +1,50 @@
+{
+  "name": "fsai-desktop",
+  "version": "0.1.0",
+  "description": "FSAI Desktop — 飞书 AI Bot 桌面启动器：绑定飞书 Bot + 模型 + Claude Code + 本地目录，一键启动管理多个 AI Coding Agent",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node scripts/smoke.js",
+    "dist": "electron-builder --win --x64"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.73.0"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.fsai.desktop",
+    "productName": "FSAI Desktop",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "compression": "maximum",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    }
+  }
+}

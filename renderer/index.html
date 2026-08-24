@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>FSAI Desktop</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">FSAI <span>Desktop</span></div>
+      <nav>
+        <button class="nav-item active" data-page="bots">🤖 Bots</button>
+        <button class="nav-item" data-page="models">🧩 Models</button>
+        <button class="nav-item" data-page="workspaces">📁 Workspaces</button>
+        <button class="nav-item" data-page="logs">📜 Logs</button>
+        <button class="nav-item" data-page="settings">⚙️ Settings</button>
+      </nav>
+      <div class="sidebar-footer" id="doctor-summary">检测中…</div>
+    </aside>
+
+    <main class="content">
+      <!-- Bots 页面 -->
+      <section class="page active" id="page-bots">
+        <div class="page-head">
+          <h1>Bots</h1>
+          <button class="primary" id="btn-new-bot">+ New Bot</button>
+        </div>
+        <div id="bot-list" class="bot-list"></div>
+      </section>
+
+      <!-- Models 页面 -->
+      <section class="page" id="page-models">
+        <div class="page-head">
+          <h1>Models</h1>
+          <div>
+            <button id="btn-refresh-ccswitch">Refresh</button>
+            <button class="primary" id="btn-new-direct">+ Direct API Profile</button>
+          </div>
+        </div>
+        <div class="card" id="ccswitch-card">
+          <h2>cc-switch（Claude Code）</h2>
+          <div id="ccswitch-status"></div>
+          <div id="ccswitch-profiles"></div>
+        </div>
+        <div class="card" id="ccswitch-codex-card">
+          <h2>cc-switch（Codex CLI）</h2>
+          <div id="ccswitch-codex-status"></div>
+          <div id="ccswitch-codex-profiles"></div>
+        </div>
+        <div class="card">
+          <h2>Direct API Profiles</h2>
+          <div id="direct-list"></div>
+        </div>
+      </section>
+
+      <!-- Workspaces 页面 -->
+      <section class="page" id="page-workspaces">
+        <div class="page-head">
+          <h1>Workspaces</h1>
+          <button class="primary" id="btn-new-workspace">+ Add Workspace</button>
+        </div>
+        <div id="workspace-list" class="table-list"></div>
+      </section>
+
+      <!-- Logs 页面 -->
+      <section class="page" id="page-logs">
+        <div class="page-head">
+          <h1>Logs</h1>
+          <button id="btn-refresh-logs">Refresh</button>
+        </div>
+        <div id="log-list" class="log-list"></div>
+      </section>
+
+      <!-- Settings 页面 -->
+      <section class="page" id="page-settings">
+        <div class="page-head"><h1>Settings</h1></div>
+        <div class="card">
+          <h2>General</h2>
+          <label><input type="checkbox" id="set-start-on-login" /> Start FSAI on login</label>
+          <label><input type="checkbox" id="set-minimize-tray" /> Minimize to tray</label>
+          <label><input type="checkbox" id="set-auto-start-bots" /> Start configured Bots automatically</label>
+        </div>
+        <div class="card">
+          <h2>Runtime</h2>
+          <label>Claude Code path <input type="text" id="set-claude-path" placeholder="auto-detect" /></label>
+          <label>Codex CLI path <input type="text" id="set-codex-path" placeholder="auto-detect" /></label>
+          <label>cc-switch path <input type="text" id="set-ccswitch-path" placeholder="auto-detect" /></label>
+          <button id="btn-save-settings" class="primary">Save Settings</button>
+        </div>
+        <div class="card">
+          <h2>Diagnostics</h2>
+          <button id="btn-run-doctor">Run Environment Check</button>
+          <pre id="doctor-result" class="doctor-result"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button class="close" id="modal-close">×</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
