@@ -174,12 +174,13 @@ class RuntimeManager {
   // codexConfig: { apiKey, configToml, model }
   runCodexOnce(bot, prompt, codexConfig = {}) {
     const codexHome = this.ensureBotCodexHome(bot.id, codexConfig);
-    // codex exec：prompt 走 stdin（"-"），-C 指定工作目录，-o 输出最后消息到文件（避免 JSONL 解析）
+    // codex exec：prompt 走 stdin（"-"），--json 输出 JSONL 流。
+    // codex 答完不会主动退出进程，所以监听 turn.completed 事件，收到即返回，不傻等 close。
     const args = ['exec', '-C', bot.workspacePath || codexHome];
     if (codexConfig.model) args.push('-m', codexConfig.model);
     args.push('--skip-git-repo-check'); // 允许在非 git 仓库目录运行
     if (bot.skipPermissions) args.push('--dangerously-bypass-approvals-and-sandbox');
-    args.push('-', '--color', 'never');
+    args.push('-', '--json');
 
     const cmd = this.codexPath || 'codex';
     const resolved = resolveExecutable(cmd) || { cmd, args: [] };
@@ -204,25 +205,52 @@ class RuntimeManager {
 
       let stdout = '';
       let stderr = '';
-      const timer = setTimeout(() => {
+      let done = false; // 防止多次 resolve
+
+      const finish = (result) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
         try { child.kill(); } catch (e) { /* ignore */ }
-        resolve({ ok: false, error: `Codex timed out after ${CLAUDE_TIMEOUT_MS / 60000}min` });
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => {
+        finish({ ok: false, error: `Codex timed out after ${CLAUDE_TIMEOUT_MS / 60000}min` });
       }, CLAUDE_TIMEOUT_MS);
 
-      child.stdout.on('data', (d) => { stdout += d.toString(); });
+      // 逐行解析 JSONL，收集 agent_message 文本，遇 turn.completed 结束
+      let buffer = '';
+      const messages = [];
+      child.stdout.on('data', (d) => {
+        buffer += d.toString();
+        let idx;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 1);
+          if (!line) continue;
+          let ev;
+          try { ev = JSON.parse(line); } catch (e) { continue; }
+          if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && ev.item.text) {
+            messages.push(ev.item.text);
+          } else if (ev.type === 'turn.completed') {
+            const text = messages.join('\n').trim();
+            if (text) finish({ ok: true, text });
+            else finish({ ok: false, error: 'Codex returned empty response' });
+          }
+        }
+      });
+
       child.stderr.on('data', (d) => { stderr += d.toString(); });
       child.on('error', (e) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: `Failed to start codex: ${e.message}` });
+        finish({ ok: false, error: `Failed to start codex: ${e.message}` });
       });
+      // 兜底：进程真的退出时（正常或异常），若还没 turn.completed 则按退出码处理
       child.on('close', (code) => {
-        clearTimeout(timer);
-        const text = stdout.trim();
-        if (code === 0 && text) {
-          resolve({ ok: true, text });
-        } else {
-          resolve({ ok: false, error: stderr.trim() || `Codex exited with code ${code}` });
-        }
+        if (done) return;
+        const text = messages.join('\n').trim();
+        if (code === 0 && text) finish({ ok: true, text });
+        else finish({ ok: false, error: stderr.trim() || `Codex exited with code ${code}` });
       });
 
       child.stdin.on('error', () => {});
