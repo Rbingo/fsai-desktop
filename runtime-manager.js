@@ -179,10 +179,7 @@ class RuntimeManager {
     const args = ['exec', '-C', bot.workspacePath || codexHome];
     if (codexConfig.model) args.push('-m', codexConfig.model);
     args.push('--skip-git-repo-check'); // 允许在非 git 仓库目录运行
-    // 默认 read-only 沙箱会让 codex 在回答时执行 command_execution 卡住（读目录/环境被拦），
-    // 必须用 danger-full-access，否则开放问题永远走不到 turn.completed。
     if (bot.skipPermissions) args.push('--dangerously-bypass-approvals-and-sandbox');
-    else args.push('-s', 'danger-full-access');
     args.push('-', '--json');
 
     const cmd = this.codexPath || 'codex';
