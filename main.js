@@ -149,6 +149,15 @@ app.whenReady().then(() => {
   logger = new Logger(dataDir());
 
   const settings = store.get().settings;
+  // 应用刚启动，没有任何运行中的 session，把上次遗留的 running/starting 状态重置为 stopped
+  // （否则强杀进程后 lastStatus 仍为 running，UI 会误显示绿色）
+  for (const b of store.listBots()) {
+    if (b.lastStatus === 'running' || b.lastStatus === 'starting') {
+      b.lastStatus = 'stopped';
+      store.upsertBot(b);
+    }
+  }
+
   // 自动检测 Claude Code / Codex 路径（首次）
   const { detectClaude, detectCodex } = require('./src/doctor');
   const claude = detectClaude(settings.runtime.claudePath);
