@@ -12,6 +12,21 @@ const { discover, discoverCodex } = require('./src/cc-switch');
 let mainWindow = null;
 let store, logger, botManager;
 
+// 单实例锁：飞书长连接是集群模式，同一飞书应用只能有一个客户端稳定连接，
+// 多个 FSAI 实例会抢连接导致 WebSocket handshake 超时 / bot identity 解析失败。
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // 用户又点了一次图标：聚焦已有窗口，而不是再开一个实例
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 function dataDir() {
   const dir = app.getPath('userData');
   fs.mkdirSync(dir, { recursive: true });

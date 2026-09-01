@@ -74,8 +74,11 @@ function resolveExecutable(cmdPath) {
     return { cmd: cmdPath, args: [], shell: true };
   }
   if (/\.js$/i.test(target)) {
-    // node 脚本：用 node 执行
-    return { cmd: process.execPath, args: [target] };
+    // node 脚本：用真正的 node 执行，绝不能用 process.execPath。
+    // 打包成 Electron exe 后 process.execPath 指向 FSAI Desktop.exe，
+    // 用 Electron 去跑 .js 会卡住/行为异常（这正是 exe 版 codex 失败、pnpm start 正常的原因）。
+    const node = which('node') || process.execPath;
+    return { cmd: node, args: [target] };
   }
   return { cmd: target, args: [] };
 }
