@@ -70,7 +70,18 @@
           <h1>Logs</h1>
           <button id="btn-refresh-logs">Refresh</button>
         </div>
-        <div id="log-list" class="log-list"></div>
+        <div class="card">
+          <h2>聊天记录（审计）</h2>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+            <select id="chatlog-bot-select" style="width:220px"></select>
+            <button id="btn-refresh-chatlog">查询</button>
+          </div>
+          <div id="chatlog-list" class="log-list" style="height:40vh"></div>
+        </div>
+        <div class="card">
+          <h2>应用日志</h2>
+          <div id="log-list" class="log-list"></div>
+        </div>
       </section>
 
       <!-- Settings 页面 -->
