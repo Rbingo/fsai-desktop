@@ -135,6 +135,9 @@ function registerIpc() {
   // --- Logs ---
   handle('get-logs', (filter) => logger.getLogs(filter || {}));
 
+  // --- Chat Log（审计）---
+  handle('get-chatlog', (botId, opts) => botManager.chatLog.query(botId, opts || {}));
+
   // --- Doctor ---
   handle('run-doctor', () => {
     const s = store.get().settings;
@@ -172,6 +175,7 @@ app.whenReady().then(() => {
     claudePath,
     codexPath,
     ccSwitchPath: settings.runtime.ccSwitchPath,
+    chatLogDir: path.join(dataDir(), 'chatlog'),
     emit,
   });
 

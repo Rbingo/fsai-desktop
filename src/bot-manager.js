@@ -1,18 +1,21 @@
 // Bot Manager：Bot 生命周期编排（创建/启动/停止/重启/复制/删除）
 // 把 FeishuAdapter + ModelResolver + RuntimeManager 串起来
+const path = require('path');
 const { RuntimeManager } = require('./runtime-manager');
 const { FeishuAdapter } = require('./feishu-adapter');
 const { resolve } = require('./model-resolver');
 const { newBot, genId } = require('./models');
+const { ChatLog } = require('./chat-log');
 
 class BotManager {
-  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit }) {
+  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir }) {
     this.store = store;
     this.logger = logger;
     this.ccSwitchPath = ccSwitchPath;
     this.emit = emit || (() => {}); // 向 UI 推送状态变化
     this.runtime = new RuntimeManager({ runtimeBaseDir, claudePath, codexPath, logger });
     this.sessions = new Map(); // botId -> { adapter, resolved }
+    this.chatLog = new ChatLog({ baseDir: chatLogDir || path.join(runtimeBaseDir, '..', 'chatlog'), logger });
   }
 
   // 按 runtime.type 分派执行（claude / codex）
@@ -88,14 +91,22 @@ class BotManager {
 
   async _handleMessage(botId, runtimeBot, msg) {
     this.logger.info(botId, `message from ${msg.chatId}: ${msg.content.slice(0, 200)}`);
+    // 记录用户消息（审计）
+    this.chatLog.logUser(botId, { chatId: msg.chatId, messageId: msg.messageId, content: msg.content });
+
     // 简单并发控制：同一 Bot 同时只处理一条消息，避免进程混乱
     const sess = this.sessions.get(botId);
     if (!sess) return '[FSAI] bot not running';
 
+    const startTs = Date.now();
     const result = await this._runResolved(runtimeBot, msg.content, sess.resolved);
+    const durationMs = Date.now() - startTs;
+
     if (result.ok) {
       this.logger.info(botId, `replied (${result.text.length} chars)`);
       const reply = this._truncate(result.text, 4000);
+      // 记录回复（审计）
+      this.chatLog.logReply(botId, { chatId: msg.chatId, messageId: msg.messageId, content: reply, durationMs, ok: true });
       try {
         await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId });
       } catch (e) {
@@ -105,6 +116,8 @@ class BotManager {
     } else {
       this.logger.error(botId, `runtime error: ${result.error}`);
       const reply = `[FSAI] ${this._runtimeErrorLabel(sess.resolved)}: ${result.error}`;
+      // 记录错误（审计）
+      this.chatLog.logReply(botId, { chatId: msg.chatId, messageId: msg.messageId, content: reply, durationMs, ok: false, error: result.error });
       try {
         await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId });
       } catch (e) { /* ignore */ }

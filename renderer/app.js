@@ -52,6 +52,7 @@ const ACTIONS = {
   'duplicate-bot': (id) => _act('duplicate-bot', id),
   'delete-bot': (id) => _deleteBot(id),
   'test-bot': (id) => _testBot(id),
+  'chat-log': (id) => _showChatLog(id),
   // Direct profile
   'edit-direct': (id) => _editDirect(id),
   'delete-direct-profile': (id) => _act('delete-direct-profile', id),
@@ -161,6 +162,7 @@ function renderBots() {
         <div class="actions">
           ${runBtn}
           <button data-action="edit-bot" data-id="${b.id}">Edit</button>
+          <button data-action="chat-log" data-id="${b.id}">聊天记录</button>
           <button data-action="duplicate-bot" data-id="${b.id}">Duplicate</button>
           <button class="danger" data-action="delete-bot" data-id="${b.id}">Delete</button>
           <button data-action="test-bot" data-id="${b.id}">Test</button>
@@ -242,6 +244,31 @@ async function _deleteBot(id) {
 
 async function _openFolder(p) {
   await api.invoke('open-folder', p);
+}
+
+async function _showChatLog(id) {
+  const bot = state.bots.find((x) => x.id === id);
+  const r = await api.invoke('get-chatlog', id, { limit: 500 });
+  const records = r.ok ? r.data : [];
+  openModal(`聊天记录 - ${bot?.name || ''}`, `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">共 ${records.length} 条记录（含消息与回复）</div>
+    <div id="chatlog-list" style="max-height:60vh;overflow-y:auto;background:#0a0c10;border-radius:8px;padding:12px;font-size:12px">
+      ${records.length
+        ? records.map((rec) => {
+            const t = new Date(rec.ts).toLocaleString();
+            const isUser = rec.type === 'user';
+            const color = isUser ? 'var(--accent)' : (rec.ok === false ? 'var(--red)' : 'var(--green)');
+            const label = rec.type === 'user' ? '用户' : (rec.ok === false ? '错误' : '回复');
+            return `<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+              <div style="color:${color};font-weight:600">[${t}] ${label}${rec.durationMs != null ? ' · ' + rec.durationMs + 'ms' : ''}</div>
+              <div style="white-space:pre-wrap;word-break:break-all;color:var(--text);margin-top:4px">${esc(rec.content)}</div>
+              ${rec.error ? `<div style="color:var(--red);margin-top:2px">${esc(rec.error)}</div>` : ''}
+            </div>`;
+          }).join('')
+        : '<div class="hint">暂无聊天记录</div>'
+      }
+    </div>
+  `);
 }
 
 function _testBot(id) {

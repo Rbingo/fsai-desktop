@@ -58,6 +58,9 @@ class Logger {
   warn(source, msg, meta) { return this.log('warn', source, msg, meta); }
   error(source, msg, meta) { return this.log('error', source, msg, meta); }
 
+  // 公开脱敏方法，供聊天记录等其他模块复用
+  redact(text) { return this._redact(text); }
+
   // 查询日志（支持按 bot / level / 时间过滤）
   getLogs({ bot, level, since } = {}) {
     let logs = this.ring.slice();
