@@ -213,12 +213,29 @@ class BotManager {
 
   // 处理飞书卡片按钮点击
   async _handleCardAction(botId, adapter, evt) {
-    const value = evt.action?.value;
-    if (!value || typeof value !== 'object') return;
+    let value = evt.action?.value;
+    if (!value) {
+      this.logger.warn(botId, 'card action 缺少 value');
+      return;
+    }
+    // value 可能是对象，也可能是 JSON 字符串（飞书不同版本行为不同），统一解析
+    if (typeof value === 'string') {
+      try { value = JSON.parse(value); } catch (e) {
+        this.logger.warn(botId, `card action value 不是合法 JSON: ${value.slice(0, 100)}`);
+        return;
+      }
+    }
+    if (typeof value !== 'object') {
+      this.logger.warn(botId, `card action value 类型异常: ${typeof value}`);
+      return;
+    }
 
     const approvalId = value.approvalId;
     const decision = value.decision;
-    if (!approvalId || !decision) return;
+    if (!approvalId || !decision) {
+      this.logger.warn(botId, `card action 缺少 approvalId/decision: ${JSON.stringify(value).slice(0, 100)}`);
+      return;
+    }
 
     const ctx = this.approvalCtx.get(approvalId);
     const pending = this.approvalManager.pending.get(approvalId);
