@@ -28,6 +28,16 @@ class FeishuAdapter {
         this.logger?.error('feishu', `onMessage error: ${e.message}`);
       }
     });
+    // 卡片按钮点击回调
+    if (this.onCardAction) {
+      this.channel.on('cardAction', async (evt) => {
+        try {
+          await this.onCardAction(evt);
+        } catch (e) {
+          this.logger?.error('feishu', `onCardAction error: ${e.message}`);
+        }
+      });
+    }
     await this.channel.connect();
     this.connected = true;
     this.logger?.info('feishu', 'Feishu channel connected');
@@ -38,6 +48,31 @@ class FeishuAdapter {
       throw new Error('Feishu not connected');
     }
     await this.channel.send(chatId, { text }, { replyTo });
+  }
+
+  // 发送 interactive card（审批卡/选择卡）
+  async sendCard(chatId, card, { replyTo } = {}) {
+    if (!this.channel || !this.connected) {
+      throw new Error('Feishu not connected');
+    }
+    return this.channel.send(chatId, { card }, { replyTo });
+  }
+
+  // 更新卡片（审批处理后把按钮置灰/标记已处理）
+  async updateCard(messageId, card) {
+    if (!this.channel || !this.connected) {
+      throw new Error('Feishu not connected');
+    }
+    return this.channel.updateCard(messageId, card);
+  }
+
+  // 设置卡片点击回调（在 connect 之前调用）
+  onCardActionHandler(handler) {
+    this.onCardAction = handler;
+    // 若已连接，立即绑定
+    if (this.connected && this.channel) {
+      this.channel.on('cardAction', handler);
+    }
   }
 
   async disconnect() {

@@ -1,28 +1,50 @@
 // Bot Manager：Bot 生命周期编排（创建/启动/停止/重启/复制/删除）
-// 把 FeishuAdapter + ModelResolver + RuntimeManager 串起来
+// 把 FeishuAdapter + ModelResolver + ClaudeAdapter/Codex 串起来
 const path = require('path');
 const { RuntimeManager } = require('./runtime-manager');
 const { FeishuAdapter } = require('./feishu-adapter');
 const { resolve } = require('./model-resolver');
+const { resolveExecutable } = require('./doctor');
 const { newBot, genId } = require('./models');
 const { ChatLog } = require('./chat-log');
+const { ApprovalManager } = require('./approvals/ApprovalManager');
+const { buildApprovalCard, buildQuestionCard, buildResolvedCard } = require('./approvals/feishu-cards');
 
 class BotManager {
-  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir }) {
+  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir, claudeSdk }) {
     this.store = store;
     this.logger = logger;
     this.ccSwitchPath = ccSwitchPath;
     this.emit = emit || (() => {}); // 向 UI 推送状态变化
     this.runtime = new RuntimeManager({ runtimeBaseDir, claudePath, codexPath, logger });
-    this.sessions = new Map(); // botId -> { adapter, resolved }
+    this.sessions = new Map(); // botId -> { adapter, resolved, claude, sessionId }
     this.chatLog = new ChatLog({ baseDir: chatLogDir || path.join(runtimeBaseDir, '..', 'chatlog'), logger });
+    this.approvalManager = new ApprovalManager({ logger });
+    this.claudeSdk = claudeSdk || null; // require('@anthropic-ai/claude-agent-sdk')
+    // 记录 approvalId -> { botId, messageId } 用于处理后的卡片更新与答复
+    this.approvalCtx = new Map();
   }
 
   // 按 runtime.type 分派执行（claude / codex）
-  _runResolved(runtimeBot, prompt, resolved) {
+  // claude 若已启用 Agent SDK（ClaudeAdapter），走 canUseTool 审批闭环；否则回退旧 CLI
+  async _runResolved(runtimeBot, prompt, resolved) {
     if (resolved.runtime === 'codex') {
       return this.runtime.runCodexOnce(runtimeBot, prompt, resolved.codex);
     }
+    // claude：优先 Agent SDK
+    const sess = this.sessions.get(runtimeBot.id);
+    if (sess?.claude) {
+      const taskId = `task-${runtimeBot.id}`;
+      const r = await sess.claude.startTask({
+        taskId,
+        projectPath: runtimeBot.workspacePath,
+        prompt,
+        resumeSessionId: sess.sessionId || undefined,
+      });
+      if (r.ok && r.sessionId) sess.sessionId = r.sessionId;
+      return r;
+    }
+    // 回退：旧 CLI
     return this.runtime.runOnce(runtimeBot, prompt, resolved.env || {});
   }
 
@@ -74,13 +96,38 @@ class BotManager {
         logger: this.logger,
       });
 
+      // 卡片按钮回调（审批）
+      adapter.onCardActionHandler(async (evt) => {
+        await this._handleCardAction(botId, adapter, evt);
+      });
+
       await adapter.connect(async (msg) => {
         await this._handleMessage(botId, runtimeBot, msg);
       });
 
-      this.sessions.set(botId, { adapter, resolved: v.resolved });
+      // 为 claude runtime 准备 ClaudeAdapter（Agent SDK 模式）
+      let claude = null;
+      if (v.resolved.runtime === 'claude' && this.claudeSdk) {
+        const { ClaudeAdapter } = require('./agents/claude/ClaudeAdapter');
+        // 解析出真实的 claude.exe（SDK 需要可执行文件路径，而非 .cmd shim）
+        const resolvedClaude = resolveExecutable(this.runtime.claudePath) || { cmd: this.runtime.claudePath };
+        claude = new ClaudeAdapter({
+          sdk: this.claudeSdk,
+          approvalManager: this.approvalManager,
+          logger: this.logger,
+          env: v.resolved.env || {},
+          cwd: ws.path,
+          claudeExecutablePath: resolvedClaude.cmd,
+        });
+        // 审批请求 → 发飞书卡片
+        claude.onApprovalRequest = (req) => {
+          this._sendApprovalCard(botId, adapter, runtimeBot, req);
+        };
+      }
+
+      this.sessions.set(botId, { adapter, resolved: v.resolved, claude, sessionId: null });
       this._setStatus(botId, 'running');
-      this.logger.info(bot.id, `started (model: ${v.resolved.detail.name})`);
+      this.logger.info(bot.id, `started (model: ${v.resolved.detail.name}, runtime: ${v.resolved.runtime})`);
       return { ok: true };
     } catch (e) {
       this._setStatus(botId, 'error');
@@ -97,6 +144,8 @@ class BotManager {
     // 简单并发控制：同一 Bot 同时只处理一条消息，避免进程混乱
     const sess = this.sessions.get(botId);
     if (!sess) return '[FSAI] bot not running';
+    // 记录当前会话，供审批卡片发送时定位
+    sess.currentChatId = msg.chatId;
 
     const startTs = Date.now();
     const result = await this._runResolved(runtimeBot, msg.content, sess.resolved);
@@ -127,6 +176,92 @@ class BotManager {
 
   _truncate(s, n) {
     return s.length > n ? s.slice(0, n) + '\n…(truncated)' : s;
+  }
+
+  // 审批请求 → 发飞书卡片
+  async _sendApprovalCard(botId, adapter, runtimeBot, req) {
+    try {
+      let card;
+      if (req.type === 'question') {
+        card = buildQuestionCard({ approvalId: req.approvalId, taskId: req.taskId, question: req.question });
+      } else {
+        card = buildApprovalCard({
+          approvalId: req.approvalId,
+          taskId: req.taskId,
+          agent: req.agent,
+          type: req.type,
+          title: req.title,
+          description: req.description,
+          risk: req.risk,
+        });
+      }
+      const result = await adapter.sendCard(req.chatId || runtimeBot.feishuChatId || this.sessions.get(botId)?.currentChatId, card);
+      // 记录卡片 messageId 与上下文，便于处理后更新
+      this.approvalCtx.set(req.approvalId, {
+        botId,
+        messageId: result?.messageId || null,
+        card,
+        taskId: req.taskId,
+      });
+      this.logger.info(botId, `approval card sent: ${req.approvalId} (${req.type})`);
+    } catch (e) {
+      this.logger.error(botId, `send approval card failed: ${e.message}`);
+      // 发卡失败时直接拒绝，避免 Claude 永久挂起
+      this.approvalManager.rejectApproval(req.approvalId, '发送审批卡片失败');
+    }
+  }
+
+  // 处理飞书卡片按钮点击
+  async _handleCardAction(botId, adapter, evt) {
+    const value = evt.action?.value;
+    if (!value || typeof value !== 'object') return;
+
+    const approvalId = value.approvalId;
+    const decision = value.decision;
+    if (!approvalId || !decision) return;
+
+    const ctx = this.approvalCtx.get(approvalId);
+    const pending = this.approvalManager.pending.get(approvalId);
+
+    if (!pending || pending.resolved) {
+      // 已处理或失效
+      try { await adapter.sendReply(evt.chatId, '该审批已经处理或已失效'); } catch (e) {}
+      return;
+    }
+
+    // 校验 approval 绑定同一 bot（安全要求第 3 条）
+    if (ctx && ctx.botId !== botId) {
+      this.logger.warn(botId, `approval ${approvalId} 不属于该 bot`);
+      return;
+    }
+
+    let decisionText;
+    if (decision === 'allow') {
+      this.approvalManager.resolveApproval(approvalId, { allowForSession: false });
+      decisionText = '已允许';
+    } else if (decision === 'allow_session') {
+      this.approvalManager.resolveApproval(approvalId, { allowForSession: true });
+      decisionText = '已本会话允许';
+    } else if (decision === 'deny') {
+      this.approvalManager.rejectApproval(approvalId, '用户拒绝');
+      decisionText = '已拒绝';
+    } else if (decision === 'answer') {
+      // AskUserQuestion 的回答
+      this.approvalManager.resolveApproval(approvalId, { allowForSession: false, answer: { answer: value.answer } });
+      decisionText = `已选择：${value.answer || ''}`;
+    }
+
+    this.logger.info(botId, `card action ${decision} on ${approvalId}`);
+
+    // 更新卡片为已处理状态
+    if (ctx?.messageId && ctx.card) {
+      try {
+        const resolvedCard = buildResolvedCard(ctx.card, decisionText);
+        await adapter.updateCard(ctx.messageId, resolvedCard);
+      } catch (e) {
+        this.logger.warn(botId, `update card failed: ${e.message}`);
+      }
+    }
   }
 
   async stop(botId) {

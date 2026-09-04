@@ -168,6 +168,15 @@ app.whenReady().then(() => {
   const codex = detectCodex(settings.runtime.codexPath);
   const codexPath = codex.path || 'codex';
 
+  // 尝试加载 Claude Agent SDK（用于审批闭环；加载失败则回退旧 CLI 模式）
+  let claudeSdk = null;
+  try {
+    claudeSdk = require('@anthropic-ai/claude-agent-sdk');
+    logger.info('app', 'Claude Agent SDK loaded');
+  } catch (e) {
+    logger.warn('app', `Claude Agent SDK 加载失败，回退 CLI 模式: ${e.message}`);
+  }
+
   botManager = new BotManager({
     store,
     logger,
@@ -176,6 +185,7 @@ app.whenReady().then(() => {
     codexPath,
     ccSwitchPath: settings.runtime.ccSwitchPath,
     chatLogDir: path.join(dataDir(), 'chatlog'),
+    claudeSdk,
     emit,
   });
 

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@anthropic-ai/claude-agent-sdk-win32-x64':
+        specifier: 0.3.260
+        version: 0.3.260
       '@larksuiteoapi/node-sdk':
         specifier: ^1.73.0
         version: 1.73.0
@@ -20,6 +23,11 @@ importers:
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
 
 packages:
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.260':
+    resolution: {integrity: sha512-relNUBdfUSHVYmB04Nle5zJDykdT+FFLwcgz/SJc87Tj68jKT4vRSTeoDrE32kdmwhjFQ15HvmLGib41b9+xTA==}
+    cpu: [x64]
+    os: [win32]
 
   '@electron-internal/extract-zip@1.0.5':
     resolution: {integrity: sha512-+bqFCP98pLI0Tt0XQo1TmlXtwjWchISndDOxCkEcIuUgXWpBnLyRI+2DU+mesvnMMX6L1XDqYNA0lXNDHd/yiA==}
@@ -1157,6 +1165,8 @@ packages:
     engines: {node: '>=10'}
 
 snapshots:
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.260': {}
 
   '@electron-internal/extract-zip@1.0.5': {}
 
