@@ -26,53 +26,55 @@ function buildApprovalCard({ approvalId, taskId, agent, type, title, description
       title: { tag: 'plain_text', content: `⚠️ ${agentLabel} 请求执行` },
       template: risk === 'high' ? 'red' : risk === 'approval' ? 'orange' : 'blue',
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `**任务**\n#${taskId || '-'}\n\n**类型**\n${type || '工具'}\n\n**详情**\n${description || '(无)'}`,
+    body: {
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**任务**\n#${taskId || '-'}\n\n**类型**\n${type || '工具'}\n\n**详情**\n${description || '(无)'}`,
+          },
         },
-      },
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `**风险**\n<font color='${riskColor}'>${riskText}</font>`,
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**风险**\n<font color='${riskColor}'>${riskText}</font>`,
+          },
         },
-      },
-      { tag: 'hr' },
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '✅ 允许一次' },
-        type: 'primary',
-        value: JSON.stringify({ approvalId, decision: 'allow' }),
-      },
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '🔓 本会话允许' },
-        type: 'default',
-        value: JSON.stringify({ approvalId, decision: 'allow_session' }),
-      },
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '❌ 拒绝' },
-        type: 'danger',
-        value: JSON.stringify({ approvalId, decision: 'deny' }),
-      },
-    ],
+        { tag: 'hr' },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '✅ 允许一次' },
+          type: 'primary',
+          value: JSON.stringify({ approvalId, decision: 'allow' }),
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '🔓 本会话允许' },
+          type: 'default',
+          value: JSON.stringify({ approvalId, decision: 'allow_session' }),
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '❌ 拒绝' },
+          type: 'danger',
+          value: JSON.stringify({ approvalId, decision: 'deny' }),
+        },
+      ],
+    },
   };
 }
 
 // 处理后的卡片（按钮替换为纯文本标记，避免重复点击）
 function buildResolvedCard(originalCard, decisionText) {
   const card = JSON.parse(JSON.stringify(originalCard));
-  const elements = (card.elements || []).filter((el) => el.tag !== 'button');
+  const elements = (card.body?.elements || []).filter((el) => el.tag !== 'button');
   elements.push({
     tag: 'div',
     text: { tag: 'lark_md', content: `✅ ${decisionText}` },
   });
-  return { ...card, elements };
+  return { ...card, body: { ...card.body, elements } };
 }
 
 // AskUserQuestion -> 选择卡
@@ -96,17 +98,19 @@ function buildQuestionCard({ approvalId, taskId, question }) {
       title: { tag: 'plain_text', content: '💬 Claude 提问' },
       template: 'blue',
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `**${question.header || '请选择'}**\n\n${question.question || ''}`,
+    body: {
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**${question.header || '请选择'}**\n\n${question.question || ''}`,
+          },
         },
-      },
-      { tag: 'hr' },
-      ...buttons,
-    ],
+        { tag: 'hr' },
+        ...buttons,
+      ],
+    },
   };
 }
 
