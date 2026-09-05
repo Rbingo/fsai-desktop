@@ -220,11 +220,13 @@ class BotManager {
     }
     // value 可能是对象，也可能是 JSON 字符串（飞书不同版本行为不同），统一解析
     if (typeof value === 'string') {
+      this.logger.info(botId, `[cardAction] value 是字符串: ${value.slice(0, 200)}`);
       try { value = JSON.parse(value); } catch (e) {
         this.logger.warn(botId, `card action value 不是合法 JSON: ${value.slice(0, 100)}`);
         return;
       }
     }
+    this.logger.info(botId, `[cardAction] 解析后 value: ${JSON.stringify(value).slice(0, 200)}`);
     if (typeof value !== 'object') {
       this.logger.warn(botId, `card action value 类型异常: ${typeof value}`);
       return;

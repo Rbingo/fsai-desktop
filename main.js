@@ -8,6 +8,7 @@ const { Logger } = require('./src/logger');
 const { runDoctor } = require('./src/doctor');
 const { BotManager } = require('./src/bot-manager');
 const { discover, discoverCodex } = require('./src/cc-switch');
+const { patchFeishuCardCallback } = require('./src/feishu-sdk-patch');
 
 let mainWindow = null;
 let store, logger, botManager;
@@ -167,6 +168,15 @@ app.whenReady().then(() => {
   const claudePath = claude.path || 'claude';
   const codex = detectCodex(settings.runtime.codexPath);
   const codexPath = codex.path || 'codex';
+
+  // 修复飞书 SDK 不处理卡片回调（type=card）的 bug
+  try {
+    const feishuSdk = require('@larksuiteoapi/node-sdk');
+    const patched = patchFeishuCardCallback(feishuSdk, logger);
+    logger.info('app', patched ? '飞书卡片回调补丁已应用' : '飞书卡片回调补丁未应用（可能已打过）');
+  } catch (e) {
+    logger.warn('app', `飞书卡片回调补丁应用失败: ${e.message}`);
+  }
 
   // 尝试加载 Claude Agent SDK（用于审批闭环；加载失败则回退旧 CLI 模式）
   let claudeSdk = null;
