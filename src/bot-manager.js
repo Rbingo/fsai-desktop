@@ -96,7 +96,13 @@ class BotManager {
         logger: this.logger,
       });
 
-      // 卡片按钮回调（审批）
+      // 卡片按钮回调（审批）—— 双通道：
+      // 1. 注册到全局表，供 feishu-sdk-patch 直接调用（绕过 SDK pushAction/lock 卡住问题）
+      // 2. 保留 adapter.onCardActionHandler 作为兜底
+      if (!global.__fsaiCardActionHandlers) global.__fsaiCardActionHandlers = [];
+      global.__fsaiCardActionHandlers.push(async (evt) => {
+        await this._handleCardAction(botId, adapter, evt);
+      });
       adapter.onCardActionHandler(async (evt) => {
         await this._handleCardAction(botId, adapter, evt);
       });
