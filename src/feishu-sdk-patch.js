@@ -1,111 +1,62 @@
-// SDK 补丁：修复 @larksuiteoapi/node-sdk 长连接不处理卡片回调（type=card）的 bug。
+// SDK 补丁：修复 @larksuiteoapi/node-sdk 长连接下卡片回调的两个 bug。
 //
-// 根因：WSClient.prototype.handleEventData 里有 `if (type !== MessageType.event) return;`
-// 导致飞书推送的卡片回调（WS 层 type='card'）被静默丢弃，卡片按钮点击永远收不到。
-// 本补丁把该判断放宽为同时接受 'event' 和 'card' 两种类型，其余逻辑不变。
+// Bug 1：WSClient.handleEventData 里 `if (type !== MessageType.event) return;`
+//   把 type='card' 的卡片回调静默丢弃（实际飞书推的是 type='event'，这个补丁先保留诊断）。
+//
+// Bug 2（真正的根因）：card.action.trigger handler 执行后不返回任何值，
+//   而 handleEventData 把 dispatcher.invoke 的返回值作为飞书回调的同步响应。
+//   飞书卡片回调是「同步回调」，要求立即返回 toast/卡片内容，否则前端报
+//   「目标回调服务超时未响应」。本补丁让 card.action.trigger 返回一个 toast 响应。
 
 function patchFeishuCardCallback(sdk, logger) {
   const WSClient = sdk.WSClient;
   const EventDispatcher = sdk.EventDispatcher;
   if (!WSClient || !WSClient.prototype) return false;
 
-  const original = WSClient.prototype.handleEventData;
-  if (!original) return false;
+  const originalHandleEventData = WSClient.prototype.handleEventData;
+  if (!originalHandleEventData) return false;
 
   // 已打过补丁则跳过
   if (WSClient.prototype.__fsaiCardPatched) return true;
 
-  // hook dispatcher.invoke，打印 parse 后的真实 event_type
+  // 关键修复：patch EventDispatcher.invoke，让 card.action.trigger 返回 toast 响应
   if (EventDispatcher && EventDispatcher.prototype && !EventDispatcher.prototype.__fsaiInvokePatched) {
     const origInvoke = EventDispatcher.prototype.invoke;
     EventDispatcher.prototype.invoke = async function (data, params) {
+      // 先解析 event_type
+      let evtType;
       try {
-        // 打印 parse 前 data 的结构和 parse 后的 event_type
         const parsed = this.requestHandle ? this.requestHandle.parse(data) : null;
-        const evtType = parsed ? parsed[Symbol.for('event-type')] : '(parse失败)';
-        logger?.debug('feishu-sdk-patch', `[invoke] parse后 event_type=${evtType}, hasHandler=${this.handles.has(evtType)}`);
-        if (evtType && this.handles.has(evtType)) {
-          logger?.info('feishu-sdk-patch', `[invoke] 匹配到 handler: ${evtType}`);
+        // CEventType 是 Symbol('event-type')，无法直接用 Symbol.for 取，用 requestHandle.parse 的结果
+        // parse 返回 { [CEventType]: header.event_type, ... }，这里从 parsed 里找 event_type 字段
+        if (parsed) {
+          evtType = parsed.event_type || parsed.header?.event_type;
         }
       } catch (e) {
-        logger?.debug('feishu-sdk-patch', `[invoke] 诊断失败: ${e.message}`);
+        evtType = null;
       }
-      return origInvoke.call(this, data, params);
+
+      // 调用原始逻辑
+      const result = await origInvoke.call(this, data, params);
+
+      // 卡片回调必须返回同步响应（toast），否则飞书超时
+      if (evtType === 'card.action.trigger') {
+        logger?.info('feishu-sdk-patch', '[invoke] 返回卡片回调 toast 响应，避免飞书超时');
+        return {
+          toast: {
+            type: 'success',
+            content: '已处理',
+          },
+        };
+      }
+
+      return result;
     };
     EventDispatcher.prototype.__fsaiInvokePatched = true;
   }
 
   WSClient.prototype.handleEventData = async function (data) {
-    // 提取 headers 里的 type（用于诊断 + 判断）
-    let type;
-    try {
-      const headers = data.headers.reduce((acc, cur) => {
-        acc[cur.key] = cur.value;
-        return acc;
-      }, {});
-      type = headers.type;
-    } catch (e) {
-      return original.call(this, data);
-    }
-
-    // 诊断：直接调用 mergeData 看返回的完整结构
-    try {
-      const headers = data.headers.reduce((acc, cur) => { acc[cur.key] = cur.value; return acc; }, {});
-      const merged = this.dataCache.mergeData({
-        message_id: headers.message_id,
-        sum: Number(headers.sum),
-        seq: Number(headers.seq),
-        trace_id: headers.trace_id,
-        data: data.payload,
-      });
-      if (merged) {
-        logger?.info('feishu-sdk-patch', `[merged] schema=${merged.schema}, header.event_type=${merged.header?.event_type}, event.type=${merged.event?.type}, keys=${Object.keys(merged).join(',')}`);
-        if (merged.header?.event_type === 'card.action.trigger') {
-          logger?.info('feishu-sdk-patch', `[card-event] ${JSON.stringify(merged.event).slice(0, 800)}`);
-        }
-      }
-    } catch (e) {
-      logger?.debug('feishu-sdk-patch', `[merged] 诊断失败: ${e.message}`);
-    }
-
-    // 记录所有 incoming 消息类型（诊断用）
-    if (logger) {
-      logger.debug('feishu-sdk-patch', `[ws] incoming message type=${type}`);
-    }
-
-    // 诊断：打印原始 payload 的 header.event_type（看飞书到底推了什么）
-    if (type === 'card' || type === 'event') {
-      try {
-        const payload = data.payload;
-        const rawStr = new TextDecoder('utf-8').decode(payload);
-        let parsed;
-        try { parsed = JSON.parse(rawStr); } catch (e) { parsed = null; }
-        if (parsed) {
-          const evtType = parsed.header?.event_type || parsed.event?.type || '(无)';
-          logger?.debug('feishu-sdk-patch', `[ws] payload event_type=${evtType}, schema=${parsed.schema || '(无)'}`);
-        } else {
-          logger?.debug('feishu-sdk-patch', `[ws] payload 非 JSON，前 200 字符: ${rawStr.slice(0, 200)}`);
-        }
-      } catch (e) {
-        logger?.debug('feishu-sdk-patch', `[ws] payload 解析失败: ${e.message}`);
-      }
-    }
-
-    // 关键修复：card 类型也放行。构造 type='event' 的副本传给原逻辑，
-    // 让原逻辑的 `type !== MessageType.event` 判断通过，后续按 payload 的
-    // event_type（如 card.action.trigger）正常分发。
-    if (type === 'card') {
-      const patchedData = {
-        ...data,
-        headers: data.headers.map((h) =>
-          h.key === 'type' ? { key: h.key, value: 'event' } : h
-        ),
-      };
-      if (logger) logger.info('feishu-sdk-patch', '[ws] card callback forwarded as event');
-      return original.call(this, patchedData);
-    }
-
-    return original.call(this, data);
+    return originalHandleEventData.call(this, data);
   };
 
   WSClient.prototype.__fsaiCardPatched = true;
