@@ -16,13 +16,52 @@ FSAI Desktop 把它们收进一个桌面 GUI：
 
 ![截图](docs/screenshot.png)
 
-## 核心特性
+## 核心能力
 
-- **Bot ≠ 模型**：Bot 和模型解耦，随时换模型，不用重建配置
-- **复用 cc-switch**：自动读取你 cc-switch 里配好的 Provider，不重复填 Key（支持 Claude Code 和 Codex CLI 两种 Runtime）
-- **Runtime 隔离**：每个 Bot 独立 HOME，多 Bot 同时跑互不影响
-- **飞书长连接**：本地开发无需公网、无需内网穿透
-- **Secret 脱敏**：App Secret / API Key 在日志和界面里自动打码
+### 🤖 Bot 与模型解耦
+
+- Bot ≠ 模型，随时换模型不用重建配置
+- 一个 Bot = 飞书应用 + 模型 Profile + Runtime + 工作目录
+
+### 🧩 多模型来源
+
+- **复用 cc-switch**：自动读取 cc-switch 的 SQLite 数据库，发现已配置的 Claude/Codex Provider，不重复填 Key
+- **Direct API 兜底**：没装 cc-switch 也能直接填 Base URL + API Key + Model
+
+### ⚡ 双 Runtime
+
+- **Claude Code**（官方 Agent SDK）
+- **Codex CLI**
+
+### 📱 飞书审批闭环（核心卖点）
+
+Claude/Codex 执行 `curl`、`npm install`、`git push` 等需授权命令时，**自动发飞书审批卡片**，手机端点「允许一次 / 本会话允许 / 拒绝」，**全程不碰本机控制台**。
+
+- 三级权限策略：SAFE 自动放行、APPROVAL 审批、HIGH RISK 标红警告
+- 支持 AskUserQuestion（Claude 提问 → 飞书选择卡）
+
+### 🔒 Runtime 隔离
+
+- 每个 Bot 独立 HOME，多 Bot 同时运行互不影响
+- 首次启动自动播种 `~/.claude` / `~/.codex`，保留登录态
+
+### 💬 多群会话隔离 + 持久化
+
+- 同一 Bot 加入多个群，**每个群独立会话上下文**（不串扰）
+- `sessionId` 按群持久化，**重启后自动 resume 续接**
+
+### 🔐 Secret 脱敏
+
+- App Secret / API Key 在日志和聊天记录中自动打码
+
+### 📜 聊天记录审计
+
+- 每个 Bot 的问答记录按 JSONL 持久化（时间戳、耗时、状态）
+- Logs 页按 Bot 查询回溯
+
+### 🔍 环境检测
+
+- 自动检测 Claude Code / Codex / cc-switch / Git，界面显示状态
 
 ## 下载
 
@@ -95,10 +134,15 @@ src/
   cc-switch.js          cc-switch SQLite 解析（claude/codex）
   model-resolver.js     模型解析（cc-switch / direct）
   runtime-manager.js    隔离 Runtime + claude/codex 执行
-  feishu-adapter.js     飞书长连接
-  bot-manager.js        Bot 生命周期编排
+  feishu-adapter.js     飞书长连接 + 卡片回调
+  feishu-sdk-patch.js   飞书 SDK 补丁（卡片回调超时修复）
+  chat-log.js           聊天记录审计
+  bot-manager.js        Bot 生命周期编排 + 会话隔离
+  agents/claude/         Claude Agent SDK 适配器
+  approvals/             审批管理器 + 权限策略 + 卡片构建
 renderer/               单页 5 页面 UI
 scripts/smoke.js        冒烟测试
+scripts/test-approval.js 审批测试
 ```
 
 ### 技术栈
@@ -111,6 +155,21 @@ Electron + 原生 Node（无框架），飞书官方 `@larksuiteoapi/node-sdk` �
 - 同一 Bot 单条消息串行处理
 - 飞书长连接 3 秒超时内未完成的请求，需后续改「先回执 + 异步回复」
 - cc-switch 各 fork 存储格式差异较大，解析做了容错，按需调优
+- 会话上下文存在本地 `config.json` + 隔离 HOME；换电脑/删除 runtime 目录后历史会话不可恢复
+
+## 数据存储位置
+
+所有数据存于 `%APPDATA%\fsai-desktop\`：
+
+| 路径 | 内容 |
+|---|---|
+| `config.json` | Bot 配置、飞书 App ID/Secret、模型绑定、Workspace、各群 sessionId |
+| `chatlog/<botId>/chat.jsonl` | 聊天记录（JSONL，含脱敏） |
+| `fsai.log` | 运行日志 |
+| `runtime/<botId>/home/` | Claude Code 隔离 HOME |
+| `runtime/<botId>/codex-home/` | Codex 隔离 HOME |
+
+> ⚠️ `config.json` 里的 App Secret / API Key 为明文存储（程序运行需要），请勿将此文件分享给他人。
 
 ## License
 
