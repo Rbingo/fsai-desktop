@@ -156,6 +156,7 @@ function renderBots() {
       ? `🌿 ${esc(ws?.name || '目录')} · 每群独立（${chatCount} 群）`
       : `📁 ${esc(ws?.name || '(未选目录)')}`;
     const knowledgeBadge = b.knowledge?.enabled ? '<div class="meta">🧠 知识内核</div>' : '';
+    const listenBadge = b.listen?.enabled ? '<div class="meta">👂 全局监听</div>' : '';
     const runBtn = running
       ? `<button class="danger" data-action="stop-bot" data-id="${b.id}">Stop</button>
          <button data-action="restart-bot" data-id="${b.id}">Restart</button>`
@@ -171,6 +172,7 @@ function renderBots() {
         <div class="meta">${wsLabel}</div>
         <div class="meta">⚙️ ${runtimeLabel}</div>
         ${knowledgeBadge}
+        ${listenBadge}
         <div class="actions">
           ${runBtn}
           <button data-action="edit-bot" data-id="${b.id}">Edit</button>
@@ -425,6 +427,10 @@ function _editBot(id) {
       <div class="hint">开启后，各群在 Workspace 下的独立子目录中干活，互不干扰</div></div>
     <div class="field-group"><label><input type="checkbox" id="f-knowledge" ${b.knowledge?.enabled ? 'checked' : ''} /> 启用知识内核</label>
       <div class="hint">所有群共享一份 CLAUDE.md + memory + skills，升级一次全部生效</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-listen" ${b.listen?.enabled ? 'checked' : ''} /> 全局监听群消息（不只 @ 它）</label>
+      <div class="hint">开启后 Bot 会读取群内所有消息并判断是否需要回复。默认关闭（仅 @ 时回复）</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-aijudge" ${b.listen?.useAIJudge !== false ? 'checked' : ''} /> 用 AI 判断意图</label>
+      <div class="hint">规则不确定时调模型判断是否该回复（关闭则只按触发词/@ 判断，更省成本）</div></div>
     <div class="field-group"><label><input type="checkbox" id="f-auto" ${b.autoStart ? 'checked' : ''} /> Start automatically</label></div>
     <div class="field-group"><label><input type="checkbox" id="f-skip" ${b.skipPermissions ? 'checked' : ''} /> --dangerously-skip-permissions</label></div>
     <div class="modal-actions"><button data-action="save-bot" data-id="${b.id}" class="primary">Save</button></div>
@@ -447,6 +453,11 @@ async function _saveBot(id) {
     workspaceMode: document.querySelector('#f-perchat').checked ? 'per-chat' : 'shared',
     chatWorkspaces: b.chatWorkspaces || {}, // 保留已有群目录注册表
     knowledge: { ...(b.knowledge || {}), enabled: document.querySelector('#f-knowledge').checked },
+    listen: {
+      ...(b.listen || {}),
+      enabled: document.querySelector('#f-listen').checked,
+      useAIJudge: document.querySelector('#f-aijudge').checked,
+    },
     autoStart: document.querySelector('#f-auto').checked,
     skipPermissions: document.querySelector('#f-skip').checked,
   };
@@ -506,6 +517,7 @@ async function _saveNewBot() {
     chatWorkspaces: {},
     chatSessions: {},
     knowledge: { enabled: document.querySelector('#f-knowledge').checked, autoMemory: true, autoSkills: true },
+    listen: { enabled: document.querySelector('#f-listen').checked, triggers: [], useAIJudge: document.querySelector('#f-aijudge').checked },
     autoStart: false,
     skipPermissions: false,
     lastStatus: 'stopped',

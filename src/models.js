@@ -57,6 +57,11 @@ function newBot({ id, name }) {
       autoMemory: true, // 允许 Bot 往 memory/ 写经验
       autoSkills: true, // 允许 Bot 往 skills/ 沉淀技能
     },
+    listen: {
+      enabled: false, // 是否全局监听群消息（不只 @ 它的）—— 默认关闭，保持 @ 才回
+      triggers: [], // 触发词，空则用默认词表（src/intent.js DEFAULT_TRIGGERS）
+      useAIJudge: true, // 规则不确定时是否调模型判断意图
+    },
   };
 }
 
@@ -68,6 +73,9 @@ function normalizeBot(bot) {
   if (!bot.chatSessions || typeof bot.chatSessions !== 'object') bot.chatSessions = {};
   if (!bot.knowledge || typeof bot.knowledge !== 'object') {
     bot.knowledge = { enabled: false, autoMemory: true, autoSkills: true };
+  }
+  if (!bot.listen || typeof bot.listen !== 'object') {
+    bot.listen = { enabled: false, triggers: [], useAIJudge: true };
   }
   return bot;
 }

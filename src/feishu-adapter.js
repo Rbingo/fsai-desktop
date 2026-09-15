@@ -12,7 +12,8 @@ class FeishuAdapter {
     this.connected = false;
   }
 
-  async connect(onMessage) {
+  // opts.listenAll: 是否监听群内所有消息（不只 @ 机器人的）
+  async connect(onMessage, { listenAll = false } = {}) {
     if (this.connected) return;
     const { createLarkChannel, LoggerLevel } = require('@larksuiteoapi/node-sdk');
     // 桥接 SDK 日志到我们的日志文件，捕获飞书推送的原始消息（诊断卡片回调）
@@ -22,12 +23,27 @@ class FeishuAdapter {
       warn: (...a) => this.logger?.warn('feishu-sdk', a.map(String).join(' ')),
       error: (...a) => this.logger?.error('feishu-sdk', a.map(String).join(' ')),
     };
-    this.channel = createLarkChannel({ appId: this.appId, appSecret: this.appSecret, loggerLevel: LoggerLevel.debug, logger: sdkLogger });
+    this.channel = createLarkChannel({
+      appId: this.appId,
+      appSecret: this.appSecret,
+      loggerLevel: LoggerLevel.debug,
+      logger: sdkLogger,
+      // policy.requireMention=false 时监听群内所有消息（用于「全局监听 + 按需回复」）
+      // 注意：requireMention 属于 PolicyGate（opts.policy），不是 SafetyPipeline（opts.safety）
+      policy: listenAll ? { requireMention: false } : undefined,
+    });
     this.channel.on('message', async (msg) => {
       const normalized = {
         chatId: msg.chatId,
         content: msg.content || '',
         messageId: msg.messageId || '',
+        // 意图判断需要的字段
+        mentionedBot: !!msg.mentionedBot,
+        mentionAll: !!msg.mentionAll,
+        replyToMessageId: msg.replyToMessageId || '',
+        senderId: msg.senderId || '',
+        senderName: msg.senderName || '',
+        chatType: msg.chatType || '',
       };
       try {
         await onMessage(normalized);
@@ -55,7 +71,8 @@ class FeishuAdapter {
     if (!this.channel || !this.connected) {
       throw new Error('Feishu not connected');
     }
-    await this.channel.send(chatId, { text }, { replyTo });
+    // 返回 { messageId }，供上层记录「机器人自己发的消息」（意图判断用）
+    return this.channel.send(chatId, { text }, { replyTo });
   }
 
   // 发送 interactive card（审批卡/选择卡）

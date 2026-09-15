@@ -222,7 +222,7 @@ class BotManager {
 
       await adapter.connect(async (msg) => {
         await this._handleMessage(botId, runtimeBot, msg);
-      });
+      }, { listenAll: !!(bot.listen?.enabled) });
 
       // 为 claude runtime 准备 ClaudeAdapter（Agent SDK 模式）
       let claude = null;
@@ -268,6 +268,55 @@ class BotManager {
     }
   }
 
+  // 全局监听模式：判断群消息是否需要回复（分层：规则预筛 → AI 判断）
+  async _shouldReply(bot, sess, msg) {
+    const { ruleGate, buildJudgePrompt, parseJudgeResult, DECISION } = require('./intent');
+
+    const gate = ruleGate(msg, {
+      botName: bot.name,
+      botMessageIds: sess.botMessageIds,
+      triggers: (bot.listen?.triggers || []).length ? bot.listen.triggers : undefined,
+    });
+
+    if (gate.decision === DECISION.REPLY) {
+      this.logger.debug(bot.id, `意图判断: 回复（${gate.reason}）`);
+      return true;
+    }
+    if (gate.decision === DECISION.IGNORE) {
+      this.logger.debug(bot.id, `意图判断: 忽略（${gate.reason}）`);
+      return false;
+    }
+
+    // ASK_AI：规则不确定，交给模型判断（可关闭）
+    if (!bot.listen?.useAIJudge) {
+      this.logger.debug(bot.id, `意图判断: 忽略（${gate.reason} 且未启用 AI 判断）`);
+      return false;
+    }
+    try {
+      const prompt = buildJudgePrompt(msg, { botName: bot.name });
+      const r = await this._runResolved({ ...bot, workspacePath: this.store.getWorkspace(bot.workspaceId)?.path },
+        prompt, sess.resolved, msg.chatId, undefined);
+      const yes = r.ok && parseJudgeResult(r.text);
+      this.logger.debug(bot.id, `意图判断: AI 判定 ${yes ? '回复' : '忽略'}（${gate.reason}）`);
+      return yes;
+    } catch (e) {
+      this.logger.warn(bot.id, `意图判断 AI 调用失败，保守忽略: ${e.message}`);
+      return false;
+    }
+  }
+
+  // 记录机器人自己发出的消息 ID（用于「回复机器人」意图识别）
+  _trackBotMessage(sess, messageId) {
+    if (!messageId) return;
+    if (!sess.botMessageIds) sess.botMessageIds = new Set();
+    sess.botMessageIds.add(messageId);
+    // 限制集合大小，避免内存无限增长
+    if (sess.botMessageIds.size > 500) {
+      const first = sess.botMessageIds.values().next().value;
+      sess.botMessageIds.delete(first);
+    }
+  }
+
   async _handleMessage(botId, runtimeBot, msg) {
     this.logger.info(botId, `message from ${msg.chatId}: ${msg.content.slice(0, 200)}`);
     // 记录用户消息（审计）
@@ -279,8 +328,18 @@ class BotManager {
     // 记录当前会话，供审批卡片发送时定位
     sess.currentChatId = msg.chatId;
 
-    // 解析该群的工作目录（per-chat 模式下每群独立；shared 模式返回 null 走默认）
     const bot = this.store.getBot(botId) || runtimeBot;
+
+    // 全局监听模式：先判断这条消息是否需要回复（不需要则静默记录并返回）
+    if (bot.listen?.enabled) {
+      const shouldReply = await this._shouldReply(bot, sess, msg);
+      if (!shouldReply) {
+        this.logger.debug(botId, `群消息已记录但按意图忽略: ${msg.content.slice(0, 60)}`);
+        return '';
+      }
+    }
+
+    // 解析该群的工作目录（per-chat 模式下每群独立；shared 模式返回 null 走默认）
     const chatWs = this.resolveChatWorkspace(bot, msg.chatId);
     this._reconcileSession(botId, sess, msg.chatId, chatWs || runtimeBot.workspacePath);
 
@@ -294,7 +353,8 @@ class BotManager {
       // 记录回复（审计）
       this.chatLog.logReply(botId, { chatId: msg.chatId, messageId: msg.messageId, content: reply, durationMs, ok: true });
       try {
-        await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId });
+        const sent = await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId });
+        this._trackBotMessage(sess, sent?.messageId);
       } catch (e) {
         this.logger.error(botId, `send reply failed: ${e.message}`);
       }
