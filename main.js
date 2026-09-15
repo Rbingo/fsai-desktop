@@ -11,7 +11,7 @@ const { discover, discoverCodex } = require('./src/cc-switch');
 const { patchFeishuCardCallback } = require('./src/feishu-sdk-patch');
 
 let mainWindow = null;
-let store, logger, botManager;
+let store, logger, botManager, knowledge;
 
 // 单实例锁：飞书长连接是集群模式，同一飞书应用只能有一个客户端稳定连接，
 // 多个 FSAI 实例会抢连接导致 WebSocket handshake 超时 / bot identity 解析失败。
@@ -139,6 +139,20 @@ function registerIpc() {
   // --- Chat Log（审计）---
   handle('get-chatlog', (botId, opts) => botManager.chatLog.query(botId, opts || {}));
 
+  // --- Knowledge（知识内核，跨群共享）---
+  handle('get-knowledge', (botId) => knowledge.readKnowledge(botId));
+  handle('save-knowledge', (botId, content) => knowledge.writeKnowledge(botId, content));
+  handle('list-knowledge-assets', (botId) => ({
+    memory: knowledge.listMemory(botId),
+    skills: knowledge.listSkills(botId),
+    dir: knowledge.botConfigDir(botId),
+  }));
+  handle('sync-knowledge', (botId) => knowledge.syncFromRealHome(botId));
+
+  // --- Chat Workspaces（每群独立工作目录）---
+  handle('list-chat-workspaces', (botId) => botManager.listChatWorkspaces(botId));
+  handle('remove-chat-workspace', (botId, chatId, force) => botManager.removeChatWorkspace(botId, chatId, { force: !!force }));
+
   // --- Doctor ---
   handle('run-doctor', () => {
     const s = store.get().settings;
@@ -187,6 +201,14 @@ app.whenReady().then(() => {
     logger.warn('app', `Claude Agent SDK 加载失败，回退 CLI 模式: ${e.message}`);
   }
 
+  // 知识内核管理（每个 Bot 一份，跨群共享）
+  const { KnowledgeManager } = require('./src/knowledge');
+  knowledge = new KnowledgeManager({
+    store,
+    runtimeBaseDir: path.join(dataDir(), 'runtime'),
+    logger,
+  });
+
   botManager = new BotManager({
     store,
     logger,
@@ -196,6 +218,7 @@ app.whenReady().then(() => {
     ccSwitchPath: settings.runtime.ccSwitchPath,
     chatLogDir: path.join(dataDir(), 'chatlog'),
     claudeSdk,
+    knowledge,
     emit,
   });
 

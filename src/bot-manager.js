@@ -1,6 +1,8 @@
 // Bot Manager：Bot 生命周期编排（创建/启动/停止/重启/复制/删除）
 // 把 FeishuAdapter + ModelResolver + ClaudeAdapter/Codex 串起来
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const { RuntimeManager } = require('./runtime-manager');
 const { FeishuAdapter } = require('./feishu-adapter');
 const { resolve } = require('./model-resolver');
@@ -10,26 +12,120 @@ const { ChatLog } = require('./chat-log');
 const { ApprovalManager } = require('./approvals/ApprovalManager');
 const { buildApprovalCard, buildQuestionCard, buildResolvedCard } = require('./approvals/feishu-cards');
 
+// 把飞书 chatId（如 oc_xxx）安全化为目录名：确定性 + 路径安全 + 防碰撞
+function safeChatId(chatId) {
+  const s = String(chatId || '');
+  const hash = crypto.createHash('sha1').update(s).digest('hex').slice(0, 8);
+  const cleaned = s
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .replace(/^[._-]+/, '')
+    .slice(0, 40);
+  return cleaned ? `${cleaned}-${hash}` : `c-${hash}`;
+}
+
 class BotManager {
-  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir, claudeSdk }) {
+  constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir, claudeSdk, knowledge }) {
     this.store = store;
     this.logger = logger;
     this.ccSwitchPath = ccSwitchPath;
     this.emit = emit || (() => {}); // 向 UI 推送状态变化
     this.runtime = new RuntimeManager({ runtimeBaseDir, claudePath, codexPath, logger });
-    this.sessions = new Map(); // botId -> { adapter, resolved, claude, sessionId }
+    this.sessions = new Map(); // botId -> { adapter, resolved, claude, sessionId, chatSessions }
     this.chatLog = new ChatLog({ baseDir: chatLogDir || path.join(runtimeBaseDir, '..', 'chatlog'), logger });
     this.approvalManager = new ApprovalManager({ logger });
     this.claudeSdk = claudeSdk || null; // require('@anthropic-ai/claude-agent-sdk')
+    this.knowledge = knowledge || null; // KnowledgeManager
     // 记录 approvalId -> { botId, messageId } 用于处理后的卡片更新与答复
     this.approvalCtx = new Map();
   }
 
+  // 计算并确保某群的工作目录（per-chat 模式）。非 per-chat 或没有 chatId 时返回 null（走共享目录）
+  resolveChatWorkspace(bot, chatId) {
+    if (!bot || bot.workspaceMode !== 'per-chat' || !chatId) return null;
+    const ws = this.store.getWorkspace(bot.workspaceId);
+    if (!ws?.path) return null;
+    const dir = path.join(ws.path, safeChatId(chatId));
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      this.logger.warn(bot.id, `创建群工作目录失败: ${e.message}`);
+      return null;
+    }
+    if (!bot.chatWorkspaces) bot.chatWorkspaces = {};
+    if (!bot.chatWorkspaces[chatId]) {
+      bot.chatWorkspaces[chatId] = { path: dir, createdAt: Date.now() };
+      this.store.upsertBot(bot);
+      this.logger.info(bot.id, `为群 ${chatId} 创建独立工作目录: ${dir}`);
+    }
+    return dir;
+  }
+
+  // 会话与路径一致性：工作目录变了就重置该群的会话，避免 resume 到错误目录
+  _reconcileSession(botId, sess, chatId, workspacePath) {
+    if (!chatId || !workspacePath) return;
+    if (!sess.lastPathByChat) sess.lastPathByChat = new Map();
+    const prev = sess.lastPathByChat.get(chatId);
+    if (prev && prev !== workspacePath && sess.chatSessions?.has(chatId)) {
+      this.logger.info(botId, `群 ${chatId} 工作目录变更 ${prev} → ${workspacePath}，重置会话`);
+      sess.chatSessions.delete(chatId);
+      const bot = this.store.getBot(botId);
+      if (bot?.chatSessions) {
+        delete bot.chatSessions[chatId];
+        this.store.upsertBot(bot);
+      }
+    }
+    sess.lastPathByChat.set(chatId, workspacePath);
+  }
+
+  // 列出某 Bot 的所有群工作目录（供 UI）
+  listChatWorkspaces(botId) {
+    const bot = this.store.getBot(botId);
+    if (!bot) return [];
+    const reg = bot.chatWorkspaces || {};
+    return Object.entries(reg).map(([chatId, info]) => ({
+      chatId,
+      path: info?.path || '',
+      createdAt: info?.createdAt || null,
+      exists: info?.path ? fs.existsSync(info.path) : false,
+    }));
+  }
+
+  // 移除某群的工作目录（只删空目录或强制删除，绝不误删用户数据）
+  async removeChatWorkspace(botId, chatId, { force = false } = {}) {
+    const bot = this.store.getBot(botId);
+    if (!bot?.chatWorkspaces?.[chatId]) return { ok: true, removed: false };
+    const info = bot.chatWorkspaces[chatId];
+    const dir = info.path;
+    let dirty = false;
+    try {
+      if (dir && fs.existsSync(dir)) {
+        const entries = fs.readdirSync(dir);
+        if (entries.length > 0 && !force) {
+          return { ok: false, dirty: true, error: '该群工作目录非空，强制移除会丢失其中的文件' };
+        }
+        if (entries.length > 0) dirty = true;
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      return { ok: false, error: `删除失败: ${e.message}` };
+    }
+    delete bot.chatWorkspaces[chatId];
+    // 同时清理该群会话，避免残留
+    if (bot.chatSessions?.[chatId]) delete bot.chatSessions[chatId];
+    this.store.upsertBot(bot);
+    this.logger.info(botId, `已移除群 ${chatId} 工作目录`);
+    return { ok: true, removed: true, dirty };
+  }
+
   // 按 runtime.type 分派执行（claude / codex）
   // claude 若已启用 Agent SDK（ClaudeAdapter），走 canUseTool 审批闭环；否则回退旧 CLI
-  async _runResolved(runtimeBot, prompt, resolved, chatId) {
+  // workspacePath：该群的工作目录（per-chat 模式下每群不同），为空则用 bot 默认
+  async _runResolved(runtimeBot, prompt, resolved, chatId, workspacePath) {
+    const cwd = workspacePath || runtimeBot.workspacePath;
     if (resolved.runtime === 'codex') {
-      return this.runtime.runCodexOnce(runtimeBot, prompt, resolved.codex);
+      return this.runtime.runCodexOnce({ ...runtimeBot, workspacePath: cwd }, prompt, resolved.codex);
     }
     // claude：优先 Agent SDK
     const sess = this.sessions.get(runtimeBot.id);
@@ -39,7 +135,7 @@ class BotManager {
       const sessionId = chatId ? sess.chatSessions?.get(chatId) : sess.sessionId;
       const r = await sess.claude.startTask({
         taskId,
-        projectPath: runtimeBot.workspacePath,
+        projectPath: cwd,
         prompt,
         resumeSessionId: sessionId || undefined,
       });
@@ -134,6 +230,10 @@ class BotManager {
         const { ClaudeAdapter } = require('./agents/claude/ClaudeAdapter');
         // 解析出真实的 claude.exe（SDK 需要可执行文件路径，而非 .cmd shim）
         const resolvedClaude = resolveExecutable(this.runtime.claudePath) || { cmd: this.runtime.claudePath };
+        // Runtime 隔离：Bot 专属 HOME + 知识内核目录（claude 配置目录）
+        const botHome = this.runtime.ensureBotHome(botId);
+        const knowledgeDir = path.join(botHome, '.claude');
+        if (this.knowledge) this.knowledge.ensure(botId);
         claude = new ClaudeAdapter({
           sdk: this.claudeSdk,
           approvalManager: this.approvalManager,
@@ -141,6 +241,8 @@ class BotManager {
           env: v.resolved.env || {},
           cwd: ws.path,
           claudeExecutablePath: resolvedClaude.cmd,
+          homeDir: botHome,
+          configDir: knowledgeDir,
         });
         // 审批请求 → 发飞书卡片
         claude.onApprovalRequest = (req) => {
@@ -177,8 +279,13 @@ class BotManager {
     // 记录当前会话，供审批卡片发送时定位
     sess.currentChatId = msg.chatId;
 
+    // 解析该群的工作目录（per-chat 模式下每群独立；shared 模式返回 null 走默认）
+    const bot = this.store.getBot(botId) || runtimeBot;
+    const chatWs = this.resolveChatWorkspace(bot, msg.chatId);
+    this._reconcileSession(botId, sess, msg.chatId, chatWs || runtimeBot.workspacePath);
+
     const startTs = Date.now();
-    const result = await this._runResolved(runtimeBot, msg.content, sess.resolved, msg.chatId);
+    const result = await this._runResolved(runtimeBot, msg.content, sess.resolved, msg.chatId, chatWs || undefined);
     const durationMs = Date.now() - startTs;
 
     if (result.ok) {

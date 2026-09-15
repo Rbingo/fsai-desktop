@@ -52,6 +52,11 @@ const ACTIONS = {
   'duplicate-bot': (id) => _act('duplicate-bot', id),
   'delete-bot': (id) => _deleteBot(id),
   'test-bot': (id) => _testBot(id),
+  'bot-knowledge': (id) => _botKnowledge(id),
+  'bot-chat-ws': (id) => _botChatWs(id),
+  'save-knowledge': (id) => _saveKnowledge(id),
+  'sync-knowledge': (id) => _syncKnowledge(id),
+  'remove-chat-ws': (id, arg) => _removeChatWs(id, arg),
   // Direct profile
   'edit-direct': (id) => _editDirect(id),
   'delete-direct-profile': (id) => _act('delete-direct-profile', id),
@@ -145,6 +150,12 @@ function renderBots() {
       ? (state.directProfiles.find((p) => p.id === b.model.profile)?.name || '?')
       : b.model.profile;
     const runtimeLabel = b.runtime?.type === 'codex' ? 'Codex CLI' : 'Claude Code';
+    const perChat = b.workspaceMode === 'per-chat';
+    const chatCount = Object.keys(b.chatWorkspaces || {}).length;
+    const wsLabel = perChat
+      ? `🌿 ${esc(ws?.name || '目录')} · 每群独立（${chatCount} 群）`
+      : `📁 ${esc(ws?.name || '(未选目录)')}`;
+    const knowledgeBadge = b.knowledge?.enabled ? '<div class="meta">🧠 知识内核</div>' : '';
     const runBtn = running
       ? `<button class="danger" data-action="stop-bot" data-id="${b.id}">Stop</button>
          <button data-action="restart-bot" data-id="${b.id}">Restart</button>`
@@ -157,11 +168,14 @@ function renderBots() {
         </div>
         <div class="meta">${STATUS_TEXT[status] || status}</div>
         <div class="meta">🧩 ${esc(modelLabel || '(未选模型)')}</div>
-        <div class="meta">📁 ${esc(ws?.name || '(未选目录)')}</div>
+        <div class="meta">${wsLabel}</div>
         <div class="meta">⚙️ ${runtimeLabel}</div>
+        ${knowledgeBadge}
         <div class="actions">
           ${runBtn}
           <button data-action="edit-bot" data-id="${b.id}">Edit</button>
+          <button data-action="bot-knowledge" data-id="${b.id}">知识</button>
+          ${perChat ? `<button data-action="bot-chat-ws" data-id="${b.id}">群目录</button>` : ''}
           <button data-action="duplicate-bot" data-id="${b.id}">Duplicate</button>
           <button class="danger" data-action="delete-bot" data-id="${b.id}">Delete</button>
           <button data-action="test-bot" data-id="${b.id}">Test</button>
@@ -294,6 +308,88 @@ async function _runTest(id) {
   box.textContent = r.ok ? (r.data.ok ? r.data.text : `Error: ${r.data.error}`) : `Error: ${r.error}`;
 }
 
+// ---------- 知识内核（跨群共享）----------
+async function _botKnowledge(botId) {
+  const bot = state.bots.find((x) => x.id === botId);
+  const [k, assets] = await Promise.all([
+    api.invoke('get-knowledge', botId),
+    api.invoke('list-knowledge-assets', botId),
+  ]);
+  const content = k.ok ? k.data : '';
+  const a = assets.ok ? assets.data : { memory: [], skills: [], dir: '' };
+  const list = (arr) => arr.length
+    ? arr.map((x) => `<div class="hint">${x.isDir ? '📁' : '📄'} ${esc(x.name)}${x.size ? ` (${x.size}B)` : ''}</div>`).join('')
+    : '<div class="hint">（空）</div>';
+
+  openModal(`知识内核 — ${bot?.name || ''}`, `
+    <div class="hint" style="margin-bottom:8px">
+      这是该 Bot 所有群共享的知识。修改后所有群立即生效。
+    </div>
+    <div class="field-group">
+      <label>CLAUDE.md（共享知识）</label>
+      <textarea id="kb-content" style="width:100%;height:220px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-family:monospace;font-size:12px">${esc(content)}</textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button data-action="save-knowledge" data-id="${botId}" class="primary">保存</button>
+      <button data-action="sync-knowledge" data-id="${botId}">从本机 ~/.claude 同步技能</button>
+      <button data-action="open-folder" data-arg="${esc(a.dir || '')}">打开目录</button>
+    </div>
+    <div class="card" style="margin:0">
+      <h2>自动积累的记忆（memory/）</h2>${list(a.memory || [])}
+    </div>
+    <div class="card" style="margin:10px 0 0">
+      <h2>沉淀的技能（skills/）</h2>${list(a.skills || [])}
+    </div>
+  `);
+}
+
+async function _saveKnowledge(botId) {
+  const content = document.querySelector('#kb-content')?.value ?? '';
+  await api.invoke('save-knowledge', botId, content);
+  alert('已保存。所有群立即生效。');
+}
+
+async function _syncKnowledge(botId) {
+  const r = await api.invoke('sync-knowledge', botId);
+  alert(r.ok ? `已同步（${r.data?.copied ?? 0} 项）` : `同步失败: ${r.error}`);
+}
+
+// ---------- 群工作目录 ----------
+async function _botChatWs(botId) {
+  const r = await api.invoke('list-chat-workspaces', botId);
+  const rows = (r.ok ? r.data : []);
+  openModal('群工作目录', `
+    <div class="hint" style="margin-bottom:10px">
+      每个飞书群有独立的工作目录，互不干扰。共 ${rows.length} 个群。
+    </div>
+    ${rows.length ? rows.map((c) => `
+      <div class="table-row">
+        <div>
+          <strong>${esc(c.chatId)}</strong>
+          <div class="hint">${esc(c.path || '(无)')}</div>
+          <div class="hint">${c.exists ? '✓ 目录存在' : '⚠ 目录不存在'}</div>
+        </div>
+        <div class="actions">
+          <button data-action="open-folder" data-arg="${esc(c.path || '')}">Open</button>
+          <button class="danger" data-action="remove-chat-ws" data-id="${botId}" data-arg="${esc(c.chatId)}">移除</button>
+        </div>
+      </div>`).join('') : '<div class="hint">暂无群工作目录（该 Bot 还没收到过消息）</div>'}
+  `);
+}
+
+async function _removeChatWs(botId, chatId) {
+  let r = await api.invoke('remove-chat-workspace', botId, chatId, false);
+  if (!r.ok) { alert(`失败: ${r.error}`); return; }
+  if (r.data?.ok) { await refreshState(); return; }
+  // 目录非空，需要二次确认
+  if (r.data?.dirty) {
+    if (!confirm('该群工作目录非空，强制移除会永久丢失其中的文件。确定继续？')) return;
+    const r2 = await api.invoke('remove-chat-workspace', botId, chatId, true);
+    if (!r2.ok || !r2.data?.ok) { alert(`失败: ${r2.data?.error || r2.error}`); return; }
+    await refreshState();
+  }
+}
+
 // ---------- Bot 编辑表单 ----------
 function _editBot(id) {
   const b = state.bots.find((x) => x.id === id);
@@ -325,6 +421,10 @@ function _editBot(id) {
     <div class="field-group"><label>Profile (cc-switch)<select id="f-profile" data-selected="${esc(b.model.profile)}">${ccProfiles}</select></label></div>
     <div class="field-group"><label>Profile (Direct API)<select id="f-direct">${directOpts}</select></label></div>
     <div class="field-group"><label>Workspace</label>${workspaceSelectHtml(b.workspaceId)}</div>
+    <div class="field-group"><label><input type="checkbox" id="f-perchat" ${b.workspaceMode === 'per-chat' ? 'checked' : ''} /> 每个飞书群使用独立工作目录</label>
+      <div class="hint">开启后，各群在 Workspace 下的独立子目录中干活，互不干扰</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-knowledge" ${b.knowledge?.enabled ? 'checked' : ''} /> 启用知识内核</label>
+      <div class="hint">所有群共享一份 CLAUDE.md + memory + skills，升级一次全部生效</div></div>
     <div class="field-group"><label><input type="checkbox" id="f-auto" ${b.autoStart ? 'checked' : ''} /> Start automatically</label></div>
     <div class="field-group"><label><input type="checkbox" id="f-skip" ${b.skipPermissions ? 'checked' : ''} /> --dangerously-skip-permissions</label></div>
     <div class="modal-actions"><button data-action="save-bot" data-id="${b.id}" class="primary">Save</button></div>
@@ -344,6 +444,9 @@ async function _saveBot(id) {
     runtime: { type: runtimeType },
     model: { source, profile },
     workspaceId: document.querySelector('#f-ws').value,
+    workspaceMode: document.querySelector('#f-perchat').checked ? 'per-chat' : 'shared',
+    chatWorkspaces: b.chatWorkspaces || {}, // 保留已有群目录注册表
+    knowledge: { ...(b.knowledge || {}), enabled: document.querySelector('#f-knowledge').checked },
     autoStart: document.querySelector('#f-auto').checked,
     skipPermissions: document.querySelector('#f-skip').checked,
   };
@@ -377,6 +480,10 @@ function _newBot() {
     <div class="field-group"><label>Profile (cc-switch)<select id="f-profile" data-selected="">${ccProfileOptions('claude-code', '')}</select></label></div>
     <div class="field-group"><label>Profile (Direct API)<select id="f-direct">${state.directProfiles.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label></div>
     <div class="field-group"><label>Workspace</label>${workspaceSelectHtml('')}</div>
+    <div class="field-group"><label><input type="checkbox" id="f-perchat" /> 每个飞书群使用独立工作目录</label>
+      <div class="hint">开启后，各群在 Workspace 下的独立子目录中干活，互不干扰</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-knowledge" /> 启用知识内核</label>
+      <div class="hint">所有群共享一份 CLAUDE.md + memory + skills，升级一次全部生效</div></div>
     <div class="modal-actions"><button data-action="save-new-bot" class="primary">Save</button></div>
   `);
   refreshProfileSelect();
@@ -395,6 +502,10 @@ async function _saveNewBot() {
     model: { source, profile },
     runtime: { type: runtimeType },
     workspaceId: document.querySelector('#f-ws').value,
+    workspaceMode: document.querySelector('#f-perchat').checked ? 'per-chat' : 'shared',
+    chatWorkspaces: {},
+    chatSessions: {},
+    knowledge: { enabled: document.querySelector('#f-knowledge').checked, autoMemory: true, autoSkills: true },
     autoStart: false,
     skipPermissions: false,
     lastStatus: 'stopped',

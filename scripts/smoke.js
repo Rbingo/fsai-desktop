@@ -8,9 +8,26 @@ const path = require('path');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fsai-smoke-'));
 
 // 1. models
-const { newBot, newWorkspace, newDirectProfile, defaultConfig } = require('../src/models');
+const { newBot, newWorkspace, newDirectProfile, defaultConfig, normalizeBot } = require('../src/models');
 assert(newBot({ name: 'test' }).name === 'test');
 assert(defaultConfig().bots.length === 0);
+// 新增字段默认值
+const b0 = newBot({ name: 'x' });
+assert.strictEqual(b0.workspaceMode, 'shared', '新 Bot 默认 shared 模式');
+assert.deepStrictEqual(b0.chatWorkspaces, {}, 'chatWorkspaces 初始为空对象');
+assert.strictEqual(b0.knowledge.enabled, false, '知识内核默认关闭');
+assert.strictEqual(newWorkspace({ name: 'w' }).git, undefined, 'workspace 无 git 字段（本期未引入）');
+// normalizeBot 兼容老配置：补齐缺失字段且不覆盖已有值
+const legacy = { id: 'bot-old', name: 'old' };
+normalizeBot(legacy);
+assert.strictEqual(legacy.workspaceMode, 'shared');
+assert.deepStrictEqual(legacy.chatWorkspaces, {});
+assert.deepStrictEqual(legacy.chatSessions, {});
+assert.strictEqual(legacy.knowledge.enabled, false);
+const keep = { id: 'b2', workspaceMode: 'per-chat', chatWorkspaces: { 'oc_a': { path: '/p' } }, knowledge: { enabled: true } };
+normalizeBot(keep);
+assert.strictEqual(keep.workspaceMode, 'per-chat', 'normalizeBot 不覆盖已有 workspaceMode');
+assert.strictEqual(keep.knowledge.enabled, true, 'normalizeBot 不覆盖已有 knowledge');
 console.log('✓ models');
 
 // 2. store

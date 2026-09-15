@@ -46,11 +46,30 @@ function newBot({ id, name }) {
       type: 'claude-code',
     },
     workspaceId: '',
+    workspaceMode: 'shared', // 'shared'（所有群共享目录）| 'per-chat'（每群独立目录）
+    chatWorkspaces: {}, // chatId -> { path, createdAt }，仅 per-chat 模式使用
     autoStart: false,
     skipPermissions: false, // 是否追加 --dangerously-skip-permissions
     lastStatus: 'stopped', // stopped | starting | running | error
     chatSessions: {}, // chatId -> sessionId，跨重启持久化每个群的会话上下文
+    knowledge: {
+      enabled: false, // 是否启用知识内核（跨群共享的 CLAUDE.md + memory + skills）
+      autoMemory: true, // 允许 Bot 往 memory/ 写经验
+      autoSkills: true, // 允许 Bot 往 skills/ 沉淀技能
+    },
   };
+}
+
+// 归一化：兼容老版本 config.json（补齐缺失字段，不改动已有值）
+function normalizeBot(bot) {
+  if (!bot || typeof bot !== 'object') return bot;
+  if (bot.workspaceMode !== 'per-chat') bot.workspaceMode = 'shared';
+  if (!bot.chatWorkspaces || typeof bot.chatWorkspaces !== 'object') bot.chatWorkspaces = {};
+  if (!bot.chatSessions || typeof bot.chatSessions !== 'object') bot.chatSessions = {};
+  if (!bot.knowledge || typeof bot.knowledge !== 'object') {
+    bot.knowledge = { enabled: false, autoMemory: true, autoSkills: true };
+  }
+  return bot;
 }
 
 function defaultConfig() {
@@ -81,4 +100,5 @@ module.exports = {
   newDirectProfile,
   newBot,
   defaultConfig,
+  normalizeBot,
 };

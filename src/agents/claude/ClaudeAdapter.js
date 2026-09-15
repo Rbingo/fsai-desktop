@@ -10,13 +10,16 @@
 const { classifyTool, describeApproval } = require('../../approvals/permission-policy');
 
 class ClaudeAdapter {
-  constructor({ sdk, approvalManager, logger, env, cwd, claudeExecutablePath }) {
+  constructor({ sdk, approvalManager, logger, env, cwd, claudeExecutablePath, homeDir, configDir }) {
     this.sdk = sdk; // require('@anthropic-ai/claude-agent-sdk')
     this.approvalManager = approvalManager;
     this.logger = logger;
     this.env = env || {}; // resolver 注入的 ANTHROPIC_* 等
     this.cwd = cwd || null;
     this.claudeExecutablePath = claudeExecutablePath || null;
+    // Runtime 隔离：每个 Bot 独立 HOME + 独立 CLAUDE_CONFIG_DIR（知识内核所在）
+    this.homeDir = homeDir || null;
+    this.configDir = configDir || null;
     this.onApprovalRequest = null; // 外部注入：发飞书审批卡片
     this.activeQueries = new Map(); // taskId -> { abortController, sessionId }
   }
@@ -194,7 +197,17 @@ class ClaudeAdapter {
   }
 
   _buildEnv() {
-    return { ...process.env, ...this.env };
+    const env = { ...process.env, ...this.env };
+    // Runtime 隔离：让 Claude Code 用 Bot 专属的 HOME 和配置目录，
+    // 避免多 Bot 共用真实 ~/.claude 互相污染，同时让知识内核（CLAUDE.md/skills）生效
+    if (this.homeDir) {
+      env.HOME = this.homeDir;
+      env.USERPROFILE = this.homeDir; // Windows
+    }
+    if (this.configDir) {
+      env.CLAUDE_CONFIG_DIR = this.configDir;
+    }
+    return env;
   }
 }
 

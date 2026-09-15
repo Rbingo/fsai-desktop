@@ -1,7 +1,7 @@
 // 配置存储：JSON 文件持久化（PRD 第 8 节数据模型落地）
 const fs = require('fs');
 const path = require('path');
-const { defaultConfig } = require('./models');
+const { defaultConfig, normalizeBot } = require('./models');
 
 class Store {
   constructor(dataDir) {
@@ -27,6 +27,8 @@ class Store {
       if (!Array.isArray(this.data.bots)) this.data.bots = [];
       if (!Array.isArray(this.data.workspaces)) this.data.workspaces = [];
       if (!Array.isArray(this.data.directProfiles)) this.data.directProfiles = [];
+      // 归一化 Bot：补齐老版本 config.json 缺失的字段（workspaceMode/chatWorkspaces/knowledge）
+      this.data.bots = this.data.bots.map(normalizeBot);
     } catch (e) {
       this.data = defaultConfig();
       this.save();
