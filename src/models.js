@@ -49,6 +49,7 @@ function newBot({ id, name }) {
     autoStart: false,
     skipPermissions: false, // 是否追加 --dangerously-skip-permissions
     lastStatus: 'stopped', // stopped | starting | running | error
+    chatSessions: {}, // chatId -> sessionId，跨重启持久化每个群的会话上下文
   };
 }
 

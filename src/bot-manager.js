@@ -43,11 +43,18 @@ class BotManager {
         prompt,
         resumeSessionId: sessionId || undefined,
       });
-      // 保存该群对应的 sessionId
+      // 保存该群对应的 sessionId（同时持久化到 bot 对象）
       if (r.ok && r.sessionId) {
         if (chatId) {
           if (!sess.chatSessions) sess.chatSessions = new Map();
           sess.chatSessions.set(chatId, r.sessionId);
+          // 持久化到 store（跨重启恢复）
+          const bot = this.store.getBot(runtimeBot.id);
+          if (bot) {
+            if (!bot.chatSessions) bot.chatSessions = {};
+            bot.chatSessions[chatId] = r.sessionId;
+            this.store.upsertBot(bot);
+          }
         } else {
           sess.sessionId = r.sessionId;
         }
@@ -141,9 +148,16 @@ class BotManager {
         };
       }
 
-      this.sessions.set(botId, { adapter, resolved: v.resolved, claude, sessionId: null, chatSessions: new Map() });
+      // 从持久化的 bot.chatSessions 恢复各群会话（跨重启续接）
+      const persistedSessions = new Map();
+      if (bot.chatSessions && typeof bot.chatSessions === 'object') {
+        for (const [chatId, sessionId] of Object.entries(bot.chatSessions)) {
+          persistedSessions.set(chatId, sessionId);
+        }
+      }
+      this.sessions.set(botId, { adapter, resolved: v.resolved, claude, sessionId: null, chatSessions: persistedSessions });
       this._setStatus(botId, 'running');
-      this.logger.info(bot.id, `started (model: ${v.resolved.detail.name}, runtime: ${v.resolved.runtime})`);
+      this.logger.info(bot.id, `started (model: ${v.resolved.detail.name}, runtime: ${v.resolved.runtime}), 恢复 ${persistedSessions.size} 个群会话`);
       return { ok: true };
     } catch (e) {
       this._setStatus(botId, 'error');
