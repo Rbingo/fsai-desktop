@@ -27,7 +27,7 @@ class BotManager {
 
   // 按 runtime.type 分派执行（claude / codex）
   // claude 若已启用 Agent SDK（ClaudeAdapter），走 canUseTool 审批闭环；否则回退旧 CLI
-  async _runResolved(runtimeBot, prompt, resolved) {
+  async _runResolved(runtimeBot, prompt, resolved, chatId) {
     if (resolved.runtime === 'codex') {
       return this.runtime.runCodexOnce(runtimeBot, prompt, resolved.codex);
     }
@@ -35,13 +35,23 @@ class BotManager {
     const sess = this.sessions.get(runtimeBot.id);
     if (sess?.claude) {
       const taskId = `task-${runtimeBot.id}`;
+      // 按 chatId 隔离会话上下文：同一 Bot 在不同群有独立的 Claude session
+      const sessionId = chatId ? sess.chatSessions?.get(chatId) : sess.sessionId;
       const r = await sess.claude.startTask({
         taskId,
         projectPath: runtimeBot.workspacePath,
         prompt,
-        resumeSessionId: sess.sessionId || undefined,
+        resumeSessionId: sessionId || undefined,
       });
-      if (r.ok && r.sessionId) sess.sessionId = r.sessionId;
+      // 保存该群对应的 sessionId
+      if (r.ok && r.sessionId) {
+        if (chatId) {
+          if (!sess.chatSessions) sess.chatSessions = new Map();
+          sess.chatSessions.set(chatId, r.sessionId);
+        } else {
+          sess.sessionId = r.sessionId;
+        }
+      }
       return r;
     }
     // 回退：旧 CLI
@@ -131,7 +141,7 @@ class BotManager {
         };
       }
 
-      this.sessions.set(botId, { adapter, resolved: v.resolved, claude, sessionId: null });
+      this.sessions.set(botId, { adapter, resolved: v.resolved, claude, sessionId: null, chatSessions: new Map() });
       this._setStatus(botId, 'running');
       this.logger.info(bot.id, `started (model: ${v.resolved.detail.name}, runtime: ${v.resolved.runtime})`);
       return { ok: true };
@@ -154,7 +164,7 @@ class BotManager {
     sess.currentChatId = msg.chatId;
 
     const startTs = Date.now();
-    const result = await this._runResolved(runtimeBot, msg.content, sess.resolved);
+    const result = await this._runResolved(runtimeBot, msg.content, sess.resolved, msg.chatId);
     const durationMs = Date.now() - startTs;
 
     if (result.ok) {
@@ -352,7 +362,8 @@ class BotManager {
     if (!v.ok) return { ok: false, errors: v.errors };
     const ws = this.store.getWorkspace(bot.workspaceId);
     const runtimeBot = { ...bot, workspacePath: ws.path };
-    return this._runResolved(runtimeBot, text, v.resolved);
+    // 测试用：不绑定具体群，用独立上下文（chatId 传 null 走旧 sessionId 逻辑）
+    return this._runResolved(runtimeBot, text, v.resolved, null);
   }
 }
 
