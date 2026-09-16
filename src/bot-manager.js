@@ -268,6 +268,48 @@ class BotManager {
     }
   }
 
+  // 知识投喂：识别「带附件的消息」或「记住：xxx」指令，存入知识库
+  // 返回 null 表示不是投喂消息（继续走正常流程），否则返回回执文本
+  async _tryIngest(botId, bot, sess, msg) {
+    if (!this.knowledge) return null;
+    const content = String(msg.content || '').trim();
+    const resources = Array.isArray(msg.resources) ? msg.resources : [];
+    const files = resources.filter((r) => r.type === 'file');
+
+    // 情形 1：消息带文件附件 → 投喂文件
+    if (files.length > 0) {
+      this.knowledge.ensure(botId);
+      const results = [];
+      for (const f of files) {
+        try {
+          const buf = await sess.adapter.downloadResource(f.fileKey, 'file');
+          const r = this.knowledge.ingestFile(botId, f.fileName || f.fileKey, buf);
+          results.push(r.ok ? `✅ ${r.fileName}（${(r.size / 1024).toFixed(1)}KB）` : `❌ ${f.fileName}: ${r.error}`);
+        } catch (e) {
+          results.push(`❌ ${f.fileName || f.fileKey}: 下载失败 ${e.message}`);
+        }
+      }
+      const reply = `📚 已存入知识库（所有群共享）：\n${results.join('\n')}`;
+      this._trackBotMessage(sess, (await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId }))?.messageId);
+      this.logger.info(botId, `投喂 ${files.length} 个文件`);
+      return reply;
+    }
+
+    // 情形 2：「记住：xxx」/「记住这个：xxx」指令 → 投喂文本
+    const m = content.match(/^(?:@\S+\s*)?记住(?:这个)?[：:]\s*([\s\S]+)$/);
+    if (m && m[1].trim()) {
+      const r = this.knowledge.ingestText(botId, m[1].trim(), { title: `note-${Date.now().toString(36)}` });
+      const reply = r.ok
+        ? `📚 已记住（所有群共享）：\n${m[1].trim().slice(0, 200)}`
+        : `❌ 保存失败：${r.error}`;
+      this._trackBotMessage(sess, (await sess.adapter.sendReply(msg.chatId, reply, { replyTo: msg.messageId }))?.messageId);
+      this.logger.info(botId, `投喂文本 ${r.fileName || ''}`);
+      return reply;
+    }
+
+    return null;
+  }
+
   // 全局监听模式：判断群消息是否需要回复（分层：规则预筛 → AI 判断）
   async _shouldReply(bot, sess, msg) {
     const { ruleGate, buildJudgePrompt, parseJudgeResult, DECISION } = require('./intent');
@@ -329,6 +371,10 @@ class BotManager {
     sess.currentChatId = msg.chatId;
 
     const bot = this.store.getBot(botId) || runtimeBot;
+
+    // 知识投喂：带附件或「记住」指令的消息，直接存入知识库
+    const ingested = await this._tryIngest(botId, bot, sess, msg);
+    if (ingested) return ingested;
 
     // 全局监听模式：先判断这条消息是否需要回复（不需要则静默记录并返回）
     if (bot.listen?.enabled) {

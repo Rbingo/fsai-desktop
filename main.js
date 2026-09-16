@@ -145,9 +145,11 @@ function registerIpc() {
   handle('list-knowledge-assets', (botId) => ({
     memory: knowledge.listMemory(botId),
     skills: knowledge.listSkills(botId),
+    docs: knowledge.listDocs(botId),
     dir: knowledge.botConfigDir(botId),
   }));
   handle('sync-knowledge', (botId) => knowledge.syncFromRealHome(botId));
+  handle('remove-knowledge-doc', (botId, fileName) => knowledge.removeDoc(botId, fileName));
 
   // --- Chat Workspaces（每群独立工作目录）---
   handle('list-chat-workspaces', (botId) => botManager.listChatWorkspaces(botId));

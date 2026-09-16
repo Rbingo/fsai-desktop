@@ -44,6 +44,9 @@ class FeishuAdapter {
         senderId: msg.senderId || '',
         senderName: msg.senderName || '',
         chatType: msg.chatType || '',
+        // 附件（知识投喂用）：[{ type:'file'|'image', fileKey, fileName }]
+        resources: Array.isArray(msg.resources) ? msg.resources : [],
+        rawContentType: msg.rawContentType || '',
       };
       try {
         await onMessage(normalized);
@@ -73,6 +76,18 @@ class FeishuAdapter {
     }
     // 返回 { messageId }，供上层记录「机器人自己发的消息」（意图判断用）
     return this.channel.send(chatId, { text }, { replyTo });
+  }
+
+  // 下载消息附件（知识投喂用）。返回 Buffer
+  // type: 'file' | 'image'
+  async downloadResource(fileKey, type = 'file') {
+    if (!this.channel || !this.connected) {
+      throw new Error('Feishu not connected');
+    }
+    if (typeof this.channel.downloadResource !== 'function') {
+      throw new Error('当前 SDK 版本不支持 downloadResource');
+    }
+    return this.channel.downloadResource(fileKey, type);
   }
 
   // 发送 interactive card（审批卡/选择卡）

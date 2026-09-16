@@ -8,7 +8,8 @@
     "smoke": "node scripts/smoke.js",
     "dist": "electron-builder --win --x64",
     "test:intent": "node scripts/test-intent.js",
-    "test:approval": "node scripts/test-approval.js"
+    "test:approval": "node scripts/test-approval.js",
+    "test:ingest": "node scripts/test-ingest.js"
   },
   "author": "",
   "license": "MIT",
@@ -29,7 +30,9 @@
       "preload.js",
       "src/**/*",
       "renderer/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+      "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**"
     ],
     "asarUnpack": [],
     "extraMetadata": {

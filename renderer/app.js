@@ -56,6 +56,7 @@ const ACTIONS = {
   'bot-chat-ws': (id) => _botChatWs(id),
   'save-knowledge': (id) => _saveKnowledge(id),
   'sync-knowledge': (id) => _syncKnowledge(id),
+  'remove-knowledge-doc': (id, arg) => _removeKnowledgeDoc(id, arg),
   'remove-chat-ws': (id, arg) => _removeChatWs(id, arg),
   // Direct profile
   'edit-direct': (id) => _editDirect(id),
@@ -318,10 +319,16 @@ async function _botKnowledge(botId) {
     api.invoke('list-knowledge-assets', botId),
   ]);
   const content = k.ok ? k.data : '';
-  const a = assets.ok ? assets.data : { memory: [], skills: [], dir: '' };
+  const a = assets.ok ? assets.data : { memory: [], skills: [], docs: [], dir: '' };
   const list = (arr) => arr.length
-    ? arr.map((x) => `<div class="hint">${x.isDir ? '📁' : '📄'} ${esc(x.name)}${x.size ? ` (${x.size}B)` : ''}</div>`).join('')
+    ? arr.map((x) => `<div class="hint">${x.isDir ? '📁' : '📄'} ${esc(x.name)}${x.size ? ` (${(x.size / 1024).toFixed(1)}KB)` : ''}</div>`).join('')
     : '<div class="hint">（空）</div>';
+  const docsList = (a.docs || []).length
+    ? (a.docs || []).map((x) => `<div class="table-row" style="padding:6px 0">
+        <div class="hint">📄 ${esc(x.name)} ${x.size ? `(${(x.size / 1024).toFixed(1)}KB)` : ''}</div>
+        <button class="danger" data-action="remove-knowledge-doc" data-id="${botId}" data-arg="${esc(x.name)}">删除</button>
+      </div>`).join('')
+    : '<div class="hint">（空）在飞书群里 @机器人 发文件，或说「记住：xxx」</div>';
 
   openModal(`知识内核 — ${bot?.name || ''}`, `
     <div class="hint" style="margin-bottom:8px">
@@ -337,12 +344,22 @@ async function _botKnowledge(botId) {
       <button data-action="open-folder" data-arg="${esc(a.dir || '')}">打开目录</button>
     </div>
     <div class="card" style="margin:0">
+      <h2>已投喂文档（docs/）</h2>${docsList}
+    </div>
+    <div class="card" style="margin:10px 0 0">
       <h2>自动积累的记忆（memory/）</h2>${list(a.memory || [])}
     </div>
     <div class="card" style="margin:10px 0 0">
       <h2>沉淀的技能（skills/）</h2>${list(a.skills || [])}
     </div>
   `);
+}
+
+async function _removeKnowledgeDoc(botId, fileName) {
+  if (!confirm(`删除已投喂的文档「${fileName}」？`)) return;
+  const r = await api.invoke('remove-knowledge-doc', botId, fileName);
+  if (!r.ok || !r.data?.ok) { alert(`删除失败: ${r.data?.error || r.error}`); return; }
+  await _botKnowledge(botId); // 刷新弹窗
 }
 
 async function _saveKnowledge(botId) {
