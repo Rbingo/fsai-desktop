@@ -20,11 +20,18 @@ const DECISION = {
 };
 
 // ① 规则预筛
-// msg: { chatId, content, mentionedBot, replyToMessageId, mentions }
+// msg: { chatId, content, mentionedBot, replyToMessageId, mentions, chatType }
 // ctx: { botName, botMessageIds: Set, triggers }
 function ruleGate(msg, ctx = {}) {
   const content = String(msg.content || '').trim();
   if (!content) return { decision: DECISION.IGNORE, reason: 'empty' };
+
+  // 单聊（p2p）：用户直接找机器人说话，每条消息都应回复，不做意图过滤
+  // 注意：飞书的单聊 chatType 是 'p2p'，群聊是 'group'
+  const chatType = String(msg.chatType || '').toLowerCase();
+  if (chatType === 'p2p' || chatType === 'single') {
+    return { decision: DECISION.REPLY, reason: 'direct_message' };
+  }
 
   // 直接 @ 机器人 → 一定回复（SDK 默认只推 @ 的消息，全局监听后这里仍生效）
   if (msg.mentionedBot) {

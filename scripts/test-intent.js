@@ -75,6 +75,26 @@ t('AI 判断结果解析', () => {
   assert.strictEqual(parseJudgeResult(''), false);
 });
 
+t('单聊（p2p）消息一律回复', () => {
+  // 单聊不需要 @，也不该被意图过滤
+  for (const c of ['你好', '今天天气不错', '在吗']) {
+    const r = ruleGate({ content: c, chatType: 'p2p' }, ctx);
+    assert.strictEqual(r.decision, DECISION.REPLY, `"${c}" 应直接回复`);
+    assert.strictEqual(r.reason, 'direct_message');
+  }
+});
+
+t('单聊优先于其他规则', () => {
+  // 即使内容像闲聊，单聊也回复
+  const r = ruleGate({ content: '哈哈哈', chatType: 'p2p' }, ctx);
+  assert.strictEqual(r.decision, DECISION.REPLY);
+});
+
+t('群聊仍按意图过滤（对照）', () => {
+  const r = ruleGate({ content: '哈哈哈', chatType: 'group' }, ctx);
+  assert.strictEqual(r.decision, DECISION.IGNORE, '群聊闲聊应忽略');
+});
+
 t('默认触发词表非空', () => {
   assert.ok(Array.isArray(DEFAULT_TRIGGERS) && DEFAULT_TRIGGERS.length > 0);
 });
