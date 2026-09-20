@@ -7,6 +7,16 @@ const STATUS_CLS = { running: 'status-running', starting: 'status-starting', err
 
 // ---------- 通用 ----------
 function el(id) { return document.getElementById(id); }
+// 安全读取 checkbox 状态：元素不存在时返回默认值，避免表单缺字段导致保存崩溃
+function checked(id, fallback = false) {
+  const n = document.getElementById(id);
+  return n ? !!n.checked : fallback;
+}
+// 安全读取输入值：元素不存在时返回默认值
+function val(id, fallback = '') {
+  const n = document.getElementById(id);
+  return n ? n.value : fallback;
+}
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -466,17 +476,17 @@ async function _saveBot(id) {
     feishu: { appId: document.querySelector('#f-appid').value, appSecret: document.querySelector('#f-secret').value },
     runtime: { type: runtimeType },
     model: { source, profile },
-    workspaceId: document.querySelector('#f-ws').value,
-    workspaceMode: document.querySelector('#f-perchat').checked ? 'per-chat' : 'shared',
+    workspaceId: val('f-ws'),
+    workspaceMode: checked('f-perchat') ? 'per-chat' : 'shared',
     chatWorkspaces: b.chatWorkspaces || {}, // 保留已有群目录注册表
-    knowledge: { ...(b.knowledge || {}), enabled: document.querySelector('#f-knowledge').checked },
+    knowledge: { ...(b.knowledge || {}), enabled: checked('f-knowledge') },
     listen: {
       ...(b.listen || {}),
-      enabled: document.querySelector('#f-listen').checked,
-      useAIJudge: document.querySelector('#f-aijudge').checked,
+      enabled: checked('f-listen'),
+      useAIJudge: checked('f-aijudge', true),
     },
-    autoStart: document.querySelector('#f-auto').checked,
-    skipPermissions: document.querySelector('#f-skip').checked,
+    autoStart: checked('f-auto'),
+    skipPermissions: checked('f-skip'),
   };
   await api.invoke('save-bot', updated);
   closeModal();
@@ -512,13 +522,17 @@ function _newBot() {
       <div class="hint">开启后，各群在 Workspace 下的独立子目录中干活，互不干扰</div></div>
     <div class="field-group"><label><input type="checkbox" id="f-knowledge" /> 启用知识内核</label>
       <div class="hint">所有群共享一份 CLAUDE.md + memory + skills，升级一次全部生效</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-listen" /> 全局监听群消息（不只 @ 它）</label>
+      <div class="hint">开启后 Bot 会读取群内所有消息并判断是否需要回复。默认关闭（仅 @ 时回复）</div></div>
+    <div class="field-group"><label><input type="checkbox" id="f-aijudge" checked /> 用 AI 判断意图</label>
+      <div class="hint">规则不确定时调模型判断是否该回复（关闭则只按触发词/@ 判断，更省成本）</div></div>
     <div class="modal-actions"><button data-action="save-new-bot" class="primary">Save</button></div>
   `);
   refreshProfileSelect();
 }
 
 async function _saveNewBot() {
-  const wsVal = document.querySelector('#f-ws').value;
+  const wsVal = val('f-ws');
   if (!wsVal) { alert('请先添加一个 Workspace（工作目录）'); return; }
   const runtimeType = document.querySelector('#f-runtime').value;
   const source = document.querySelector('#f-source').value;
@@ -529,12 +543,12 @@ async function _saveNewBot() {
     feishu: { appId: document.querySelector('#f-appid').value, appSecret: document.querySelector('#f-secret').value },
     model: { source, profile },
     runtime: { type: runtimeType },
-    workspaceId: document.querySelector('#f-ws').value,
-    workspaceMode: document.querySelector('#f-perchat').checked ? 'per-chat' : 'shared',
+    workspaceId: val('f-ws'),
+    workspaceMode: checked('f-perchat') ? 'per-chat' : 'shared',
     chatWorkspaces: {},
     chatSessions: {},
-    knowledge: { enabled: document.querySelector('#f-knowledge').checked, autoMemory: true, autoSkills: true },
-    listen: { enabled: document.querySelector('#f-listen').checked, triggers: [], useAIJudge: document.querySelector('#f-aijudge').checked },
+    knowledge: { enabled: checked('f-knowledge'), autoMemory: true, autoSkills: true },
+    listen: { enabled: checked('f-listen'), triggers: [], useAIJudge: checked('f-aijudge', true) },
     autoStart: false,
     skipPermissions: false,
     lastStatus: 'stopped',
