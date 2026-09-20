@@ -11,10 +11,15 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const DEFAULT_KNOWLEDGE = `# Bot 知识库
+const DEFAULT_KNOWLEDGE = `# Bot 知识库（跨群共享）
 
-<!-- 这是跨群共享的知识内核。所有群都会读到这份内容。
-     你可以手动编辑，也可以让 Bot 把经验写进 memory/ 目录。 -->
+<!-- 这是「用户级」知识，该 Bot 的所有群都会读到。
+     你可以手动编辑，也可以让 Bot 把经验写进 memory/ 目录。
+
+     分层说明：
+     - 这里（共享层）：跨群通用的规则、术语、技能 —— 改一次所有群生效
+     - 各群工作目录的 CLAUDE.md（项目级）：该群专属的背景与记忆
+     Claude Code 会自动合并读取这两层。 -->
 
 ## 通用规则
 
@@ -30,7 +35,7 @@ const DEFAULT_KNOWLEDGE = `# Bot 知识库
 
 ## 记忆索引
 
-<!-- Bot 自动积累的记忆在 memory/ 目录，可在此维护索引 -->
+<!-- 跨群通用的记忆可以放这里；群专属记忆由各群工作目录的 memory/ 管理 -->
 
 ## 已投喂文档
 

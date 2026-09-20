@@ -396,7 +396,8 @@ async function _botChatWs(botId) {
         <div>
           <strong>${esc(c.chatId)}</strong>
           <div class="hint">${esc(c.path || '(无)')}</div>
-          <div class="hint">${c.exists ? '✓ 目录存在' : '⚠ 目录不存在'}</div>
+          <div class="hint">${c.exists ? '✓ 目录存在' : '⚠ 目录不存在'}${(c.memories || []).length ? ` · 🧠 ${c.memories.length} 个记忆文件` : ''}</div>
+          ${(c.memories || []).length ? `<div class="hint" style="padding-left:8px">${(c.memories || []).map((m) => '📄 ' + esc(m)).join(' · ')}</div>` : ''}
         </div>
         <div class="actions">
           <button data-action="open-folder" data-arg="${esc(c.path || '')}">Open</button>

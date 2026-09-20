@@ -23,6 +23,31 @@ function safeChatId(chatId) {
   return cleaned ? `${cleaned}-${hash}` : `c-${hash}`;
 }
 
+// 群工作目录的项目级 CLAUDE.md 模板
+// 让 Bot 知道：通用知识在共享层，这个群的专属记忆写到本地 memory/
+const CHAT_WORKSPACE_CLAUDE_MD = (botName, chatId) => `# 本群工作区（${botName}）
+
+<!-- 这个文件是「项目级」知识，只对本飞书群生效。
+     它与 Bot 的「用户级」共享知识（跨群通用规则）会自动合并。 -->
+
+## 群信息
+
+- 群 ID：\`${chatId}\`
+- 这是该群独立的工作目录，改动不会影响其他群
+
+## 记忆约定
+
+- **本群专属**的记忆（项目背景、群内约定、讨论结论）→ 写入 \`memory/\` 目录
+  - 例如：\`memory/project-context.md\`、\`memory/decisions.md\`
+- **跨群通用**的知识（通用规则、技能、术语表）→ 由用户维护在共享知识库中，不要写这里
+- 需要回忆本群之前的内容时，用 Read 工具读 \`memory/\` 下的文件
+
+## 目录说明
+
+- \`memory/\` —— 本群积累的记忆（按主题分文件）
+- 其他文件 —— 该群的产出物（代码、文档等）
+`;
+
 class BotManager {
   constructor({ store, logger, runtimeBaseDir, claudePath, codexPath, ccSwitchPath, emit, chatLogDir, claudeSdk, knowledge }) {
     this.store = store;
@@ -39,6 +64,22 @@ class BotManager {
     this.approvalCtx = new Map();
   }
 
+  // 初始化群工作目录的脚手架：memory/ + 项目级 CLAUDE.md
+  // 这是「记忆按群隔离」的落地点——Claude Code 会读取 cwd 下的 CLAUDE.md（项目级），
+  // 与 Bot 级共享 CLAUDE.md（用户级）自动合并。
+  _ensureChatWorkspaceScaffold(dir, bot, chatId) {
+    try {
+      fs.mkdirSync(path.join(dir, 'memory'), { recursive: true });
+      const md = path.join(dir, 'CLAUDE.md');
+      if (!fs.existsSync(md)) {
+        fs.writeFileSync(md, CHAT_WORKSPACE_CLAUDE_MD(bot.name || 'Bot', chatId));
+        this.logger.info(bot.id, `已为群 ${chatId} 初始化工作目录脚手架`);
+      }
+    } catch (e) {
+      this.logger?.warn(bot.id, `初始化群脚手架失败: ${e.message}`);
+    }
+  }
+
   // 计算并确保某群的工作目录（per-chat 模式）。非 per-chat 或没有 chatId 时返回 null（走共享目录）
   resolveChatWorkspace(bot, chatId) {
     if (!bot || bot.workspaceMode !== 'per-chat' || !chatId) return null;
@@ -47,6 +88,8 @@ class BotManager {
     const dir = path.join(ws.path, safeChatId(chatId));
     try {
       fs.mkdirSync(dir, { recursive: true });
+      // 初始化群专属的记忆目录与项目级 CLAUDE.md（每群一份，记忆按群隔离）
+      this._ensureChatWorkspaceScaffold(dir, bot, chatId);
     } catch (e) {
       this.logger.warn(bot.id, `创建群工作目录失败: ${e.message}`);
       return null;
@@ -82,12 +125,26 @@ class BotManager {
     const bot = this.store.getBot(botId);
     if (!bot) return [];
     const reg = bot.chatWorkspaces || {};
-    return Object.entries(reg).map(([chatId, info]) => ({
-      chatId,
-      path: info?.path || '',
-      createdAt: info?.createdAt || null,
-      exists: info?.path ? fs.existsSync(info.path) : false,
-    }));
+    return Object.entries(reg).map(([chatId, info]) => {
+      const dir = info?.path || '';
+      // 统计该群的记忆文件（按群隔离的产物）
+      let memories = [];
+      try {
+        const memDir = path.join(dir, 'memory');
+        if (dir && fs.existsSync(memDir)) {
+          memories = fs.readdirSync(memDir, { withFileTypes: true })
+            .filter((d) => d.isFile())
+            .map((d) => d.name);
+        }
+      } catch (e) { /* ignore */ }
+      return {
+        chatId,
+        path: dir,
+        createdAt: info?.createdAt || null,
+        exists: dir ? fs.existsSync(dir) : false,
+        memories,
+      };
+    });
   }
 
   // 移除某群的工作目录（只删空目录或强制删除，绝不误删用户数据）
