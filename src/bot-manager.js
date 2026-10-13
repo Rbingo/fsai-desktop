@@ -573,8 +573,11 @@ class BotManager {
       this.approvalManager.rejectApproval(approvalId, '用户拒绝');
       decisionText = '已拒绝';
     } else if (decision === 'answer') {
-      // AskUserQuestion 的回答
-      this.approvalManager.resolveApproval(approvalId, { allowForSession: false, answer: { answer: value.answer } });
+      // AskUserQuestion 的回答：带上问题文本与选项，供 ClaudeAdapter 组装 updatedInput
+      this.approvalManager.resolveApproval(approvalId, {
+        allowForSession: false,
+        answer: { answer: value.answer, question: value.question || '', questionIndex: value.questionIndex },
+      });
       decisionText = `已选择：${value.answer || ''}`;
     }
 

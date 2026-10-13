@@ -78,18 +78,60 @@ function buildResolvedCard(originalCard, decisionText) {
 }
 
 // AskUserQuestion -> 选择卡
+// Claude 的真实输入结构是 { questions: [{ question, header, options:[{label,description}], multiSelect }] }
+// 兼容单个 question 对象的旧形态。
 function buildQuestionCard({ approvalId, taskId, question }) {
-  const options = question.options || [];
+  const questions = Array.isArray(question?.questions)
+    ? question.questions
+    : (question?.question ? [question] : []);
 
-  const buttons = options.map((opt) => {
-    const label = typeof opt === 'string' ? opt : (opt.label || String(opt));
-    return {
-      tag: 'button',
-      text: { tag: 'plain_text', content: label },
-      type: 'default',
-      value: JSON.stringify({ approvalId, decision: 'answer', answer: label }),
-    };
-  });
+  const elements = [];
+
+  for (const q of questions) {
+    const header = q.header || '';
+    const text = q.question || '';
+    elements.push({
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `${header ? `**${header}**\n\n` : ''}${text}`,
+      },
+    });
+
+    const options = Array.isArray(q.options) ? q.options : [];
+    for (const opt of options) {
+      const label = typeof opt === 'string' ? opt : (opt.label || String(opt));
+      const desc = (typeof opt === 'object' && opt?.description) ? opt.description : '';
+      elements.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: label },
+        type: 'default',
+        // 多问题场景下把问题下标带上，便于区分答案归属
+        value: JSON.stringify({
+          approvalId,
+          decision: 'answer',
+          answer: label,
+          ...(questions.length > 1 ? { questionIndex: questions.indexOf(q), question: text } : {}),
+        }),
+      });
+      if (desc) {
+        elements.push({
+          tag: 'note',
+          elements: [{ tag: 'plain_text', content: desc.slice(0, 200) }],
+        });
+      }
+    }
+
+    if (questions.length > 1) elements.push({ tag: 'hr' });
+  }
+
+  // 兜底：没有任何可选项时，提示用户直接回复
+  if (elements.length === 0) {
+    elements.push({
+      tag: 'div',
+      text: { tag: 'lark_md', content: '（Claude 发起了提问，但没有可选项，请直接回复消息）' },
+    });
+  }
 
   return {
     schema: '2.0',
@@ -98,19 +140,7 @@ function buildQuestionCard({ approvalId, taskId, question }) {
       title: { tag: 'plain_text', content: '💬 Claude 提问' },
       template: 'blue',
     },
-    body: {
-      elements: [
-        {
-          tag: 'div',
-          text: {
-            tag: 'lark_md',
-            content: `**${question.header || '请选择'}**\n\n${question.question || ''}`,
-          },
-        },
-        { tag: 'hr' },
-        ...buttons,
-      ],
-    },
+    body: { elements },
   };
 }
 

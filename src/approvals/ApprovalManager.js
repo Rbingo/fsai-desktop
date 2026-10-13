@@ -56,13 +56,14 @@ class ApprovalManager {
     return { approvalId, promise, entry };
   }
 
-  // 用户点击「允许一次」/「本会话允许」
-  resolveApproval(approvalId, { allowForSession = false } = {}) {
+  // 用户点击「允许一次」/「本会话允许」/ 回答问题
+  resolveApproval(approvalId, { allowForSession = false, answer = null } = {}) {
     const entry = this.pending.get(approvalId);
     if (!entry) return { ok: false, reason: '该审批已经处理或已失效' };
     if (entry.resolved) return { ok: false, reason: '该审批已经处理或已失效' };
     entry.allowForSession = entry.allowForSession || allowForSession;
-    this._finish(approvalId, { behavior: 'allow' }, false);
+    // answer 用于 AskUserQuestion：必须透传给 _finish，否则 Claude 收不到用户的选择
+    this._finish(approvalId, answer ? { behavior: 'allow', answer } : { behavior: 'allow' }, false);
     return { ok: true, allowForSession: entry.allowForSession };
   }
 

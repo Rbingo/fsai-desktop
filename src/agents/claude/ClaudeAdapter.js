@@ -159,7 +159,8 @@ class ClaudeAdapter {
       type: 'question',
       payload: input,
       title: 'Claude 提问',
-      description: input.question || '',
+      // 摘要用于日志/卡片标题（input 形如 { questions: [{question,...}] }）
+      description: input?.questions?.[0]?.question || input?.question || '',
       risk: 'approval',
     });
 
@@ -170,14 +171,35 @@ class ClaudeAdapter {
         agent: 'claude',
         type: 'question',
         title: 'Claude 提问',
-        description: input.question || '',
+        description: input?.questions?.[0]?.question || input?.question || '',
         question: input,
       });
     }
 
     const decision = await promise;
     if (decision.behavior === 'allow') {
-      return { behavior: 'allow', updatedInput: decision.answer || {} };
+      // AskUserQuestion 期望的返回格式：{ questions, answers: { 问题文本: 答案 } }
+      // 参考实测：必须回填 questions 原结构 + answers 映射，Claude 才能识别选择
+      const questions = Array.isArray(input?.questions) ? input.questions : [];
+      const picked = decision.answer || {};
+      const answers = {};
+      if (questions.length > 0) {
+        // 单问题：answer 文本即选项；多问题：用 questionIndex 定位
+        for (const q of questions) {
+          if (q?.question) {
+            answers[q.question] = picked[q.question] || picked.answer || '';
+          }
+        }
+      } else if (picked.answer) {
+        answers[picked.question || 'answer'] = picked.answer;
+      }
+      return {
+        behavior: 'allow',
+        updatedInput: {
+          ...(questions.length > 0 ? { questions } : {}),
+          answers,
+        },
+      };
     }
     return { behavior: 'deny', message: decision.message || '用户未回答' };
   }
